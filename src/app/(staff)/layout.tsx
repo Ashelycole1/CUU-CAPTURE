@@ -1,13 +1,13 @@
 import { requireActor } from '@/server/auth/current';
-import { AppHeader } from '@/components/layout/app-header';
+import { StaffAppHeader } from '@/components/staff/app-header';
 
-/** Server-side guard: DOS staff and admins. */
+/** Server-side guard: DOS staff and admins. Services still check roles (layouts are UX, not security). */
 export default async function StaffLayout({ children }: { children: React.ReactNode }) {
   const actor = await requireActor(['dos_staff', 'dos_admin']);
   return (
     <>
-      <AppHeader actor={actor} home="/dashboard" />
-      <main id="main" className="mx-auto w-full max-w-[1440px] px-4 py-6">
+      <StaffAppHeader actor={actor} />
+      <main id="main" tabIndex={-1} className="mx-auto w-full max-w-[1440px] px-4 py-6 outline-none">
         {children}
       </main>
     </>

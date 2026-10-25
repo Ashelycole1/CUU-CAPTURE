@@ -213,6 +213,8 @@ export const applications = sqliteTable(
     withdrawnAt: text('withdrawn_at'),
     /** Incremented each time a corrections round is sent (dedupe for FR-REV-5). */
     correctionsRound: integer('corrections_round').notNull().default(0),
+    /** Retention sweep (FR-AUD-2) removed files and personal fields at this time; the row stays as an anonymised aggregate. */
+    purgedAt: text('purged_at'),
     lastActivityAt: text('last_activity_at').notNull(),
     createdAt: createdAt(),
     updatedAt: text('updated_at'),
@@ -409,6 +411,8 @@ export const notifications = sqliteTable(
     attempts: integer('attempts').notNull().default(0),
     lastError: text('last_error'),
     providerId: text('provider_id'),
+    /** Retry backoff: a failed row is not retried before this time (null = now). */
+    nextAttemptAt: text('next_attempt_at'),
     createdAt: createdAt(),
     sentAt: text('sent_at'),
   },
@@ -506,3 +510,44 @@ export const settings = sqliteTable('settings', {
   updatedAt: text('updated_at'),
   updatedBy: text('updated_by'),
 });
+
+// ---------------------------------------------------------------- jobs + privacy (jobs/admin agent)
+
+/** One row per job per logical run (e.g. daily-runway for a Kampala date). Lets a cut-off run resume. */
+export const jobRuns = sqliteTable(
+  'job_runs',
+  {
+    id: id(),
+    job: text('job').notNull(),
+    /** Logical run key, e.g. the Kampala date `2026-10-25`. */
+    runKey: text('run_key').notNull(),
+    status: text('status').$type<'running' | 'done' | 'failed'>().notNull().default('running'),
+    /** Last processed id (keyset cursor) so a cut-off run resumes where it stopped. */
+    cursor: text('cursor'),
+    stats: json<Record<string, number>>('stats').notNull(),
+    attempts: integer('attempts').notNull().default(1),
+    lastError: text('last_error'),
+    startedAt: text('started_at').notNull(),
+    updatedAt: text('updated_at').notNull(),
+    finishedAt: text('finished_at'),
+  },
+  (t) => [uniqueIndex('job_runs_job_key_uq').on(t.job, t.runKey), index('job_runs_job_started_idx').on(t.job, t.startedAt)],
+);
+
+/** FR-AUD-3: a student asks for their account to be deleted after the cycle ends; an admin approves. */
+export const deletionRequests = sqliteTable(
+  'deletion_requests',
+  {
+    id: id(),
+    profileId: text('profile_id').notNull(),
+    status: text('status').$type<'pending' | 'approved' | 'rejected' | 'completed'>().notNull().default('pending'),
+    requestedAt: text('requested_at').notNull(),
+    decidedBy: text('decided_by'),
+    decidedAt: text('decided_at'),
+    completedAt: text('completed_at'),
+  },
+  (t) => [
+    index('deletion_requests_status_idx').on(t.status, t.requestedAt),
+    uniqueIndex('deletion_requests_one_pending_uq').on(t.profileId).where(sql`status = 'pending'`),
+  ],
+);

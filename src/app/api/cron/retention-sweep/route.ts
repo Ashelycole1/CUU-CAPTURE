@@ -1,17 +1,22 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, after } from 'next/server';
 import { assertCronAuth, route } from '@/server/http';
-import { flushNotifications } from '@/server/notify';
+import { jobsEnv, runRetentionSweep } from '@/server/jobs';
+import { continueCron, hopOf, logJob, MAX_HOPS } from '@/server/jobs/continue';
 
 /**
- * Vercel Cron (vercel.json, 03:00 UTC = 06:00 Kampala). Auth: Authorization: Bearer $CRON_SECRET.
- * STUB (foundation): the jobs agent implements the body (must be idempotent).
+ * Retention sweep (FR-AUD-2). Vercel Cron, once a day (vercel.json). Auth: Bearer $CRON_SECRET.
+ * Executes exactly the plan shown on /retention (dry run). Never touches audit_log.
  */
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 export const GET = route(async (req) => {
   assertCronAuth(req);
-  // TODO(jobs agent): implement retention-sweep.
-  const notifications = await flushNotifications();
-  return NextResponse.json({ ok: true, job: 'retention-sweep', implemented: false, notifications });
+  const started = Date.now();
+  const hop = hopOf(req);
+  const result = await runRetentionSweep({ budgetMs: jobsEnv().cronBudgetMs });
+  if (!result.complete && hop < MAX_HOPS) after(() => continueCron('/api/cron/retention-sweep', hop + 1));
+  const body = { ok: true, job: 'retention-sweep', hop, ...result, ms: Date.now() - started };
+  logJob('retention-sweep', body);
+  return NextResponse.json(body, { headers: { 'Cache-Control': 'no-store' } });
 });

@@ -5,7 +5,8 @@ import { NextResponse, type NextRequest } from 'next/server';
  * 1. Strict nonce-based CSP for every page (NFR-SEC). Pages are dynamic, so Next
  *    applies the nonce to its own scripts automatically.
  * 2. CSRF: non-GET /api requests must come from our own origin (except /api/cron,
- *    which authenticates with CRON_SECRET). Server Actions also get Next's own check.
+ *    which authenticates with CRON_SECRET, and /api/webhooks, which verify a provider
+ *    signature). Server Actions also get Next's own check.
  * Auth is NOT enforced here; route-group layouts and services do that.
  */
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
@@ -44,7 +45,7 @@ function sameOrigin(req: NextRequest): boolean {
 
 export function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
-  if (pathname.startsWith('/api/') && !SAFE_METHODS.has(req.method) && !pathname.startsWith('/api/cron/')) {
+  if (pathname.startsWith('/api/') && !SAFE_METHODS.has(req.method) && !pathname.startsWith('/api/cron/') && !pathname.startsWith('/api/webhooks/')) {
     if (!sameOrigin(req)) {
       return NextResponse.json({ error: { code: 'FORBIDDEN', message: 'Cross-origin request blocked' } }, { status: 403 });
     }

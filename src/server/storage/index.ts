@@ -31,9 +31,22 @@ export class EncryptedBlobStore implements BlobStore {
   }
 }
 
+/**
+ * Current key from config plus optional retired keys for reading old files during a
+ * rotation: `FILE_ENCRYPTION_PREVIOUS_KEYS="k1:<base64>,k2:<base64>"` (docs/SECURITY.md).
+ */
 export function keyringFromConfig(): Keyring {
   const c = config();
-  return { currentKeyId: c.fileEncryptionKeyId, keys: { [c.fileEncryptionKeyId]: c.fileEncryptionKey } };
+  const keys: Record<string, Buffer> = {};
+  for (const part of (process.env.FILE_ENCRYPTION_PREVIOUS_KEYS ?? '').split(',')) {
+    const [id, b64] = part.trim().split(':');
+    if (!id || !b64) continue;
+    const key = Buffer.from(b64, 'base64');
+    if (key.length !== 32) throw new Error(`FILE_ENCRYPTION_PREVIOUS_KEYS: key ${id} must be 32 bytes, base64`);
+    keys[id] = key;
+  }
+  keys[c.fileEncryptionKeyId] = c.fileEncryptionKey;
+  return { currentKeyId: c.fileEncryptionKeyId, keys };
 }
 
 let store: BlobStore | null = null;

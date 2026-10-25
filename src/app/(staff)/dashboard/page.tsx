@@ -1,70 +1,124 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
+import { Flag } from 'lucide-react';
 import { requireActor } from '@/server/auth/current';
-import { getDashboardSummary, listApplicationsForStaff } from '@/server/services';
-import { RunwayCompact } from '@/components/runway';
-import { Chip } from '@/components/ui/chip';
-import { TableContainer, Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
+import { isServiceError } from '@/server/errors';
+import { getDashboardSummary, listApplicationsForStaff, listSavedViews, type StaffListResult } from '@/server/services';
 import { todayInKampala } from '@/domain/dates';
-import { applicationStatusTone, staffStatusLabel } from '@/domain/status';
+import type { StaffListFilters, StaffSort } from '@/domain';
+import { fmt, staffText } from '@/i18n/staff';
+import { SummaryTiles } from '@/components/staff/summary-tiles';
+import { DashboardFilters } from '@/components/staff/dashboard-filters';
+import { SavedViews, type SavedViewItem } from '@/components/staff/saved-views';
+import { ApplicationsTable, type DashboardRow } from '@/components/staff/applications-table';
+import { dashboardSearch, parseDashboardParams, type RawSearchParams } from '@/components/staff/dashboard-params';
 
-export const metadata: Metadata = { title: 'Dashboard' };
+export const metadata: Metadata = { title: staffText.dashboard.title };
 
-/** STUB (foundation) — replaced by the staff-UI agent (filters, saved views, bulk actions). */
-export default async function DashboardPage() {
+const PAGE_SIZE = 50;
+const T = staffText.dashboard;
+
+/**
+ * FR-DOS-1/2/3. Server component: fetches ONE keyset page (50 rows, a single
+ * aggregated query in listApplicationsForStaff, no N+1), the summary counts and
+ * saved views in parallel. Filters/sort/cursor live in the URL.
+ */
+export default async function DashboardPage({ searchParams }: { searchParams: Promise<RawSearchParams> }) {
   const actor = await requireActor(['dos_staff', 'dos_admin']);
+  const { filters, sort, cursor } = parseDashboardParams(await searchParams);
   const today = todayInKampala();
-  const [summary, list] = await Promise.all([getDashboardSummary(actor, today), listApplicationsForStaff(actor, { today, limit: 50 })]);
-  const tiles: [string, number][] = [
-    ['Needs review', summary.needsReview],
-    ['Corrections pending', summary.correctionsPending],
-    ['Critical / expired', summary.criticalOrExpired],
-    ['Ready for immigration', summary.readyForImmigration],
-    ['Fees unpaid', summary.feesUnpaid],
-  ];
+
+  const listPage = (c: string | null): Promise<StaffListResult> => listApplicationsForStaff(actor, { filters, sort, cursor: c, limit: PAGE_SIZE, today });
+  const [summary, views, list] = await Promise.all([
+    getDashboardSummary(actor, today),
+    listSavedViews(actor),
+    listPage(cursor).catch((e: unknown) => {
+      // A stale/hand-edited cursor: fall back to the first page instead of failing.
+      if (isServiceError(e) && e.code === 'VALIDATION' && cursor) return listPage(null);
+      throw e;
+    }),
+  ]);
+
+  const now = new Date().toISOString();
+  const rows: DashboardRow[] = list.items.map((i) => {
+    const claimActive = !!i.claimedBy && !!i.claimedUntil && i.claimedUntil > now;
+    return {
+      id: i.id,
+      ref: i.ref,
+      status: i.status,
+      studentName: i.studentName,
+      studentEmail: i.studentEmail,
+      studentNo: i.studentNo,
+      studentType: i.studentType,
+      nationality: i.nationality,
+      feeStatus: i.feeStatus,
+      docsRequired: i.docsRequired,
+      docsApproved: i.docsApproved,
+      docsPending: i.docsPending,
+      docsRejected: i.docsRejected,
+      lastActivityAt: i.lastActivityAt,
+      claimedByMe: claimActive && i.claimedBy === actor.id,
+      claimedByOther: claimActive && i.claimedBy !== actor.id,
+      emailBounced: i.emailBounced,
+      runway: i.runway,
+    };
+  });
+
+  const savedViews: SavedViewItem[] = views.map((v) => ({
+    id: v.id,
+    name: v.name,
+    shared: v.shared,
+    canDelete: v.ownerId === actor.id || actor.role === 'dos_admin',
+    filters: v.filters as StaffListFilters & { sort?: StaffSort },
+  }));
+
   return (
-    <div className="space-y-6">
-      <h1>Dashboard</h1>
-      <ul className="grid grid-cols-2 gap-3 md:grid-cols-5">
-        {tiles.map(([label, n]) => (
-          <li key={label} className="rounded-md border border-line bg-surface p-4 shadow-1">
-            <p className="text-sm text-ink-muted">{label}</p>
-            <p className="font-mono text-2xl font-semibold tabular">{n}</p>
-          </li>
-        ))}
-      </ul>
-      <TableContainer>
-        <Table>
-          <THead>
-            <TR>
-              <TH>Student</TH>
-              <TH>Ref</TH>
-              <TH>Runway</TH>
-              <TH>Status</TH>
-              <TH>Docs</TH>
-            </TR>
-          </THead>
-          <TBody>
-            {list.items.map((i) => (
-              <TR key={i.id}>
-                <TD>
-                  <span className="font-semibold">{i.studentName ?? i.studentEmail}</span>
-                  <span className="block text-xs text-ink-muted">{i.studentNo}</span>
-                </TD>
-                <TD className="font-mono">{i.ref}</TD>
-                <TD>
-                  <RunwayCompact summary={i.runway} />
-                </TD>
-                <TD>
-                  <Chip tone={applicationStatusTone(i.status)}>{staffStatusLabel(i.status)}</Chip>
-                </TD>
-                <TD className="tabular">
-                  {i.docsApproved}/{i.docsRequired}
-                </TD>
-              </TR>
-            ))}
-          </TBody>
-        </Table>
-      </TableContainer>
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <h1>{T.title}</h1>
+          <p className="text-sm text-ink-muted">{T.subtitle}</p>
+        </div>
+      </div>
+
+      <SummaryTiles
+        current={filters}
+        counts={{
+          needsReview: summary.needsReview,
+          correctionsPending: summary.correctionsPending,
+          criticalOrExpired: summary.criticalOrExpired,
+          readyForImmigration: summary.readyForImmigration,
+          feesUnpaid: summary.feesUnpaid,
+        }}
+      />
+
+      {summary.openRunwayFlags > 0 && (
+        <p className="flex items-center gap-2 rounded-md border border-line bg-surface px-4 py-2 text-sm">
+          <Flag aria-hidden className="size-4 text-risk-urgent" />
+          {fmt(T.runwayFlags, { count: summary.openRunwayFlags })}
+        </p>
+      )}
+
+      <SavedViews views={savedViews} current={{ ...filters, sort }} />
+      <DashboardFilters key={JSON.stringify([filters, sort])} filters={filters} sort={sort} />
+
+      <ApplicationsTable key={`${JSON.stringify([filters, sort])}:${cursor ?? ''}`} rows={rows} total={list.total} />
+
+      <nav aria-label="Pagination" className="flex items-center justify-end gap-2">
+        {cursor && (
+          <Link href={`/dashboard${dashboardSearch(filters, sort)}`} className="inline-flex min-h-9 items-center rounded-sm border border-line bg-surface px-3 text-sm font-semibold no-underline">
+            {T.firstPage}
+          </Link>
+        )}
+        {list.nextCursor && (
+          <Link
+            href={`/dashboard${dashboardSearch(filters, sort, list.nextCursor)}`}
+            className="inline-flex min-h-9 items-center rounded-sm border border-line bg-surface px-3 text-sm font-semibold no-underline"
+          >
+            {T.nextPage}
+          </Link>
+        )}
+      </nav>
     </div>
   );
 }

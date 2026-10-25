@@ -107,3 +107,110 @@ Node 20.20 is installed. vitest 5 and better-sqlite3 13 need Node ≥ 22, so we 
 
 ### D-28 Fonts via next/font/google
 Inter, Fraunces (600, H1/H2) and JetBrains Mono are self-hosted by `next/font/google` at build time, so `font-src 'self'` holds. The build downloads the font files. One local build failed on a transient fetch error and passed on retry. If builds become flaky offline, switch to `next/font/local` with committed woff2 files.
+
+## Staff UI
+
+(Numbered `S-xx` so they don't collide with entries other agents add at the same time.)
+
+### ST-01 Review Mode undo is a client-side 8-second delay
+After a decision, Review Mode moves on straight away and shows an 8 s undo toast. The decision is only sent (`reviewDocumentAction` → `reviewDocument`) once the toast expires. Undo cancels the timer, so nothing was ever written. We chose this over a service-level undo for two reasons. The foundation has no undo service, and adding one would mean editing foundation code. More importantly, an undo after commit would have to reverse a status transition and an already-queued `corrections_needed` email (FR-REV-5). Commits run one at a time through a single promise chain, so FR-REV-5 batching still sees decisions in order. When the reviewer leaves the page (in-app navigation, a filter change, or the Exit/detail links), pending decisions are committed immediately. If they close the tab, `beforeunload` tries to commit and also shows the browser's "leave page?" prompt. Known risk: if the browser is killed within 8 s of a decision, that decision is lost. Nothing was written, so it stays visible as `uploaded` in the queue.
+
+### ST-02 Claims in Review Mode
+Opening a document claims its application (`claimApplication`). A heartbeat re-claims every 60 s, but only if the reviewer used the keyboard or pointer in the last 5 minutes. An idle reviewer's claim therefore lapses after the 15-minute service expiry (FR-REV-6). `reviewDocument` also renews the claim. When the reviewer moves to another application, the previous claim is released once its pending decisions have committed. A `ConflictError` shows the claim banner and disables Approve/Reject. Staff names are not shown ("Another reviewer"): no service maps profile ids to names for non-admins.
+
+### ST-03 Packets: in memory, integrity-checked, streamed download
+`buildPacket` (`src/server/services/packet-builder.ts`) builds the whole ZIP in memory with fflate. JPGs are stored with no compression, the PDF and JSON with level 6. Input is capped at `MAX_PACKET_BYTES` = 25 MB, and the POST route sets `maxDuration = 60`. Before zipping, every decrypted file's SHA-256 must equal `document_versions.sha256`. On a mismatch the packet is marked `failed` (`failPacket`), and any blob already stored is deleted. Export order is checklist (rule-set) order, then page. `NN` runs 01..N across all files, so the two admission-letter pages are two files with consecutive numbers and otherwise the same name pattern. File names are ASCII-folded (`Zoë O'Brien` → `OBrien`; `CUU/2024/7` → `CUU-2024-7`). The surname is the last word of the full name. The cover sheet uses only the standard Helvetica/Courier fonts (WinAnsi), so non-Latin-1 characters print as `?`. `manifest.json` lists every JPG plus `cover_sheet.pdf`, each with name, SHA-256, bytes, doc code, version id, upload and review timestamps. The same manifest is saved in `packets.manifest`. The download route `GET /api/packets/{appId}/{packetId}` decrypts the ZIP and returns it as a `ReadableStream` in 256 KB chunks. Vercel's 4.5 MB cap applies to buffered response bodies only, so streaming lets larger packets through. The ZIP is still decrypted fully in memory, because GCM needs the whole ciphertext. Each download writes one `packet.downloaded` audit row (`authorizePacketFile`).
+
+### ST-04 Payment receipts go through a route handler under `(staff)`
+`POST /applications/{id}/payments` (multipart) records the payment. It is a route handler because Server Action bodies default to 1 MB, and `next.config.ts` is foundation-owned. The receipt image (≤ 4 MB) is re-encoded with sharp: orientation applied, EXIF stripped, ≤ 2000 px, JPEG q82. It is then stored at `receipts/{appId}/{uuid}.jpg` through the encrypted BlobStore. The key uses its own UUID because `recordPayment` generates the payment id internally. Viewing happens at `GET /applications/{id}/payments/{paymentId}/receipt`, which is audited via `authorizeReceiptFile`. Both routes check the role themselves, because layouts don't run for route handlers, and the POST also calls `assertSameOrigin` (proxy.ts only covers `/api/*`).
+
+### ST-05 Bulk actions
+- **Send reminder** posts a normal (non-internal) message to each student through `postMessage`. That emails them (`message:{id}`), puts the reminder in their in-app thread, and audits it. We did this because there is no staff "send reminder" service, and the `reminder` notification kind is reserved for the daily runway job's dedupe scheme.
+- **Mark fee paid** uses `setFeeStatus(…,'paid')`, which is audited. No payment row is created; use the detail page's form for real payments. Only selected rows that are `unpaid` are sent.
+- **Export packets** builds packets for selected `approved`/`sent_to_immigration` applications, at most 10 per call because of function time limits. It returns download links. We don't build a ZIP of ZIPs, which would exceed the memory and response limits.
+- At most 100 ids per call. Each id succeeds or is skipped/failed on its own.
+
+### ST-06 Dashboard state lives in the URL; paging is keyset "next / first"
+Filters, sort and cursor are URL params (`q,status,type,nat,risk,fee,from,to,sort,mine,drafts,cursor`), parsed leniently by `src/components/staff/dashboard-params.ts`. The page server-renders one 50-row keyset page from `listApplicationsForStaff` (one aggregated query plus a count), alongside the summary and saved views in parallel. Paging offers only "Next page" and "First page", because keyset cursors don't go backwards. An invalid cursor falls back to page 1. Summary tiles are links that apply their filter; clicking an active tile clears it. Three built-in presets ("Urgent this week", "Awaiting my review", "Ready to send") appear before saved views. Keyboard: `/` search, `j`/`k` (or arrows) move, `Enter` open, `x` select.
+
+### ST-07 Staff UI copy in `src/i18n/staff.ts`
+All staff strings, the cover-sheet text and the per-document review checklists live in `src/i18n/staff.ts` (`staffText`, `fmt`). Keeping them out of `en.ts` avoids edit collisions between agents. The lead can merge them into `en.ts` under `staff.*` later.
+
+### ST-08 Gaps and limits
+- "Student unreachable" (`emailBounced`) shows on dashboard rows. The detail page can't show it because `ApplicationDetail` has no `email_status`, and nothing sets `bounced` yet (no webhook).
+- Staff can't withdraw: `withdrawApplication` is student-only. The detail page offers Close where the state machine allows it (`sent_to_immigration`/`pass_issued`).
+- Timeline and messages show "Staff", "You", "System" or the student's name, not other staff members' names.
+- The cover sheet shows the approver's name, read from `profiles` inside the packet-builder service.
+
+## Student UI
+
+### SU-01 Routes
+`/apply` is the checklist home. It sends a draft with an incomplete profile to `/profile`, and `/checklist` redirects to `/apply`. The other routes are `/profile` (3 steps of 3 questions, read-only once submitted), `/documents/[type]?slot=N`, `/review`, `/status` and `/messages`. Every value saves on blur or change through server actions in `src/app/(student)/actions.ts`, which call `updateStudentProfile` / `updateApplicationFields` (FR-APP-3). Submit runs `submitApplication` and then `after(() => flushNotifications())` for the receipt. Student strings live in `src/i18n/student.ts`, separate from `en.ts`, so parallel agents don't collide on one file.
+
+### SU-02 Scan Coach thresholds live in `src/lib/scan/constants.ts`
+The client pipeline and the server route share one file. Limits: max 3 MB stored, 12 MP downscale cap, 8000 px hard ceiling on the server, JPEG quality 0.85 → 0.70 in 0.05 steps. Blur is the Laplacian variance on a 1024 px grey copy: hard fail < 25, warning < 60. Glare is the share of pixels ≥ 250: warning > 4 %, hard fail > 25 %. A mean brightness < 45 gives a "too dark" warning. The thresholds are first guesses and need tuning against real phone photos. Hard fails: too small, too blurry, heavy glare, and over 3 MB at quality 0.7. Everything else is a soft warning with "Use anyway", and the warning codes plus `usedAnyway` are stored in `document_versions.quality`.
+
+### SU-03 1200 px minimum applies to passport-type and ID documents
+`passport_data_page`, `visa_status_page` (a passport page), `student_id_face` and `passport_photos` use 1200 px on the long edge. Every other document uses 1600 px. Each document code also maps to a frame-guide shape (passport, ID card, photo, A4) in `DOC_PROFILES`.
+
+### SU-04 Upload route details (`POST /api/uploads`)
+- The client sends `applicationId/docCode/slot` in the query string **and** in the multipart body. The route reads the query first so `prepareDocumentUpload` (authz/state) can fail before the body is parsed.
+- The server re-encodes only when needed. When the JPEG has a non-1 orientation or any EXIF/XMP/IPTC/ICC/comment, sharp rotates it, drops all metadata and re-encodes at quality 85, stepping down to 70 if it is still over 3 MB. Clean canvas JPEGs are stored byte-for-byte after a full decode check. That avoids a second round of compression loss.
+- **Idempotency:** before anything is stored, the route checks `getApplicationDetail` for an active version with the same SHA-256 in the same slot. A match returns `200 {idempotent:true}` with the existing version. This also covers a retry after a successful corrections upload, where `prepareDocumentUpload` would otherwise fail with INVALID_STATE because the document is no longer `rejected`.
+- On any error after `put` (including a seq ConflictError), both blobs are deleted. A Conflict is returned with `details.retry=true`, and the client retries it.
+
+### SU-05 Client resilience
+Each processed JPEG is written to IndexedDB (`visadesk-uploads`) **before** the upload starts and removed only when the server confirms. Uploads use XHR for progress, with full-jitter exponential backoff (1 s base, 30 s cap, 8 attempts). Status 0, 408, 429, 5xx and seq CONFLICT are retried; other 4xx are final. A pending retry wakes early on the `online` event. `<PendingUploads/>` in the student layout resumes the queue on page load and when the connection returns. When IndexedDB is unavailable (private mode), the queue is held in memory only.
+
+### SU-06 Heavy libraries load lazily
+`heic2any` and `pdfjs-dist` load through dynamic `import()` only when a HEIC or PDF file is chosen. The pdf.js worker and the quality worker are created with `new Worker(new URL(..., import.meta.url))`, which CSP `worker-src 'self' blob:` allows. Before falling back to heic2any, the client first tries the browser's own HEIC decoder (Safari). For a multi-page PDF, the student picks pages, and each chosen page fills the next empty `min_files` slot.
+
+### SU-07 The student sees the DOS reason through a new read-only service
+`listReasonTemplates` is staff-only. The new `src/server/services/student-view.ts` adds `getReasonLabelsForApplication(actor, applicationId, codes)`, which returns label and body text for the reason codes on an application the actor can read. It is additive, exported from that file only, and leaves `services/index.ts` unchanged.
+
+### SU-08 Expired at first login
+The application is still allowed. The checklist shows the Runway plus a separate "Estimated penalty: USD X so far (USD 20 per day)" card labelled as an estimate (FR-RUN-4). The profile wizard shows the same estimate as soon as the student enters a past expiry date. The admin alert at submission is handled by the services (D-18).
+
+## Jobs/Admin/Infra
+
+### D-J1 Reminder stages: only the current stage is sent
+The daily Runway job (`src/server/jobs/daily-runway.ts`) computes, for each active student who has **not submitted** (no active application, or only a `draft`), the smallest configured reminder day `D` (rule set `reminderDays`, default 60/30/14/7/0) with `daysToExpiry <= D`, plus an implicit **expired stage `-1`** when `daysToExpiry < 0` ("reminders 60/30/14/7/expired", FR-NOT-1). Only that stage is flagged and emailed: a student first seen with 10 days left gets the 14-day reminder, not the 60 and 30 as well. Earlier open flags for the same expiry are resolved when a later stage is flagged; all open flags resolve when the student submits or their expiry changes. Students with a draft get "Finish your application" copy (`payload.hasDraft`). The active rule set's `reminderDays` applies to everyone.
+
+### D-J2 Idempotency and resumability
+Correctness comes from `runway_flags` UNIQUE(student, expiry, day) and the dedupe key `reminder:{studentId}:{expiry}:{day}` (stage `-1` for expired). A new `job_runs` table (UNIQUE job + run key = Kampala date) stores a keyset cursor per page of 200 students; runs stop at `CRON_BUDGET_MS` (40 s, below the 60 s `maxDuration`) and re-invoke themselves via `after()` with `?hop=N` (max 8). A lost continuation only delays work until the next call. Same-day re-runs return `alreadyDone`.
+
+### D-J3 Expired students: one DOS digest per day
+Instead of one alert per expired student per admin, admins get one `staff_alert` per day (`expired_digest:{date}:{adminId}`) with the count of students newly flagged expired. The student list is the Runway flags (`listOpenRunwayFlags(actor)` in `services/runway-flags.ts`, for the staff dashboard).
+
+### D-J4 Notification retries with backoff and a daily cap
+`notifications.next_attempt_at` was added. After a failed send the next attempt waits 0 (next flush), 15 min, 2 h, 12 h; `MAX_ATTEMPTS` stays 5 (small edit in `notify/index.ts`). The cron flushes with `flushWithinCap()`, which never sends more than `EMAIL_DAILY_CAP` (default 80) emails per rolling 24 h because Resend's free tier allows 100/day including OTP codes. `after()` flushes from user actions are not capped (they are small).
+
+### D-J5 Intra-day work without paid crons
+Vercel Hobby crons run once a day. `.github/workflows/health.yml` (free) calls `/api/health` and the new `/api/cron/flush` (email retries + stale-claim cleanup) every 6 hours with `CRON_SECRET`. It is optional and skips itself without the `APP_URL` variable.
+
+### D-J6 Retention scope
+Eligible: applications `closed` (by `closed_at`) **or `withdrawn`** (by `withdrawn_at`) more than `retention_days` ago, not yet purged. Purging deletes all files (versions, thumbnails, packets, receipts), blanks keys, clears packet manifests (they contain surnames), payment references, message bodies, reviewer notes (row and timeline `note`), notification payloads and application notes, and sets the new `applications.purged_at`. The application row stays as the anonymised aggregate. Students are anonymised automatically only when every application is purged, none is active and they have not signed in within the period. `audit_log` is never touched. `planRetention()` is the only planner, used by both the admin dry run and the sweep.
+
+### D-J7 Account deletion (FR-AUD-3)
+New table `deletion_requests` (one pending per student). Students may request only when they have no active application. Approval purges all their applications and anonymises the profile immediately (`services/privacy.ts`). The student-facing button belongs to the student UI (functions `requestAccountDeletion`, `getMyDeletionRequest`, `cancelDeletionRequest`); admins decide on `/retention`.
+
+### D-J8 Rule-set editing and migration
+Only one draft exists at a time; `saveRuleSetDraft` edits it in place (new audit action `rule_set.draft_updated`). The impact summary is generated from a pure diff (`services/rule-diff.ts`). "Migrate in-flight applications" moves **draft applications only** to the published version and recomputes their checklist; submitted-or-later applications always keep their version, because adding a required document to an application under review would break the review state machine (resolves D-22).
+
+### D-J9 Email copy is versioned, not edited in the UI
+FR-ADM-2 "email copy": `/templates` shows a live preview of every email, but copy is edited in `src/i18n/jobs.ts` through code review, so changes are versioned and tested. Reason templates are fully editable (deactivate instead of delete). Emails: 560 px single column, one button plus a plain fallback link, preheader, explicit subjects ("Action needed: fix 1 document for VD-2026-00042"), Runway line in reminders, DOS footer (contact, office hours placeholder, automated-message line).
+
+### D-J10 Bounces
+`/api/webhooks/resend` verifies the Svix signature (`RESEND_WEBHOOK_SECRET`, 5-minute timestamp tolerance) and sets `profiles.email_status` to `bounced` on permanent bounces and complaints, back to `ok` on a later delivery (audited `profile.email_status_set`, IDs only). `/api/webhooks/*` is exempt from the proxy's same-origin check (small edit in `src/proxy.ts`).
+
+### D-J11 Backups stay on GitHub
+`scripts/backup.ts` dumps via `@libsql/client` (no Turso CLI); the workflow gzips, encrypts with `openssl enc -aes-256-cbc -pbkdf2 -iter 200000`, verifies decryption and uploads a 30-day artifact. `scripts/restore.ts` loads into an empty database; triggers are created after data so the append-only audit triggers do not block the load. Blob files are not backed up (no free second store).
+
+### D-J12 Region `fra1`
+Hobby allows one function region. Database round trips dominate latency, so functions, Turso and Blob are co-located in Frankfurt rather than choosing `cpt1`, which has no matching Turso location.
+
+### D-J13 File-key rotation
+`keyringFromConfig()` also reads `FILE_ENCRYPTION_PREVIOUS_KEYS` (`id:base64,…`) so old files stay readable during a rotation; `scripts/rotate-file-key.ts` re-encrypts files not on the current key and updates their storage keys (small additive edit in `storage/index.ts`).
+
+### D-J14 First admin
+Production seeding creates no users. `scripts/bootstrap-admin.ts --email … --name …` creates or promotes the first `dos_admin` (audited `staff.bootstrapped`, actor null).

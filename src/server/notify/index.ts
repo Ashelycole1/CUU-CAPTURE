@@ -1,5 +1,5 @@
 import 'server-only';
-import { and, eq, inArray, lt, or, sql } from 'drizzle-orm';
+import { and, eq, isNull, lt, lte, or, sql } from 'drizzle-orm';
 import { config } from '../config';
 import { getDb, type Db, type DbOrTx } from '../db/client';
 import { applications, notifications, profiles, reasonTemplates, ruleDocuments } from '../db/schema';
@@ -57,7 +57,16 @@ export async function queueNotification(tx: DbOrTx, input: QueueNotificationInpu
   return res.length > 0;
 }
 
-const MAX_ATTEMPTS = 5;
+export const MAX_ATTEMPTS = 5;
+
+/**
+ * Retry backoff after the Nth failed attempt: the 1st failure is retried on the next
+ * flush (transient blips), then 15 min, 2 h, 12 h. After MAX_ATTEMPTS the row stays `failed`.
+ */
+export function retryDelayMs(attempts: number): number {
+  const steps = [0, 15 * 60_000, 2 * 3_600_000, 12 * 3_600_000];
+  return steps[Math.min(Math.max(attempts, 1), steps.length) - 1]!;
+}
 
 async function buildContext(db: Db, n: typeof notifications.$inferSelect): Promise<{ to: string; ctx: EmailContext } | null> {
   const c = config();
@@ -77,6 +86,7 @@ async function buildContext(db: Db, n: typeof notifications.$inferSelect): Promi
     day: typeof p.day === 'number' ? p.day : undefined,
     messagePreview: typeof p.preview === 'string' ? p.preview : undefined,
     text: typeof p.text === 'string' ? p.text : undefined,
+    payload: p,
   };
   if (n.kind === 'corrections_needed' && app) {
     const items = (p.items as { docCode: string; reasonCode: string | null; note?: string | null }[]) ?? [];
@@ -102,6 +112,7 @@ export async function flushNotifications(opts: { db?: Db; limit?: number; channe
 }> {
   const db = opts.db ?? getDb();
   const ch = opts.channel ?? getChannel();
+  const nowIsoStr = new Date().toISOString();
   const staleSending = new Date(Date.now() - 10 * 60_000).toISOString();
   const rows = await db
     .select()
@@ -110,7 +121,8 @@ export async function flushNotifications(opts: { db?: Db; limit?: number; channe
       and(
         lt(notifications.attempts, MAX_ATTEMPTS),
         or(
-          inArray(notifications.status, ['queued', 'failed']),
+          eq(notifications.status, 'queued'),
+          and(eq(notifications.status, 'failed'), or(isNull(notifications.nextAttemptAt), lte(notifications.nextAttemptAt, nowIsoStr))),
           and(eq(notifications.status, 'sending'), lt(notifications.sentAt, staleSending)),
         ),
       ),
@@ -147,7 +159,11 @@ export async function flushNotifications(opts: { db?: Db; limit?: number; channe
     } catch (e) {
       await db
         .update(notifications)
-        .set({ status: 'failed', lastError: String((e as Error).message ?? e).slice(0, 500) })
+        .set({
+          status: 'failed',
+          lastError: String((e as Error).message ?? e).slice(0, 500),
+          nextAttemptAt: new Date(Date.now() + retryDelayMs(n.attempts + 1)).toISOString(),
+        })
         .where(eq(notifications.id, n.id));
       failed++;
     }

@@ -1,51 +1,141 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
+import { redirect } from 'next/navigation';
+import { ArrowRight, BadgeCheck, Banknote, Pencil, TriangleAlert } from 'lucide-react';
 import { requireActor } from '@/server/auth/current';
 import { getChecklistForApplication, getOrCreateDraft } from '@/server/services';
 import { Runway } from '@/components/runway';
-import { Chip } from '@/components/ui/chip';
+import { ChecklistCard } from '@/components/student/checklist-card';
+import { ProgressRing } from '@/components/student/progress-ring';
+import { StickyBar } from '@/components/student/sticky-bar';
+import { docHref, humanize, nextUndone } from '@/components/student/logic';
 import { documentStateChip, studentStatusCopy } from '@/domain/status';
-import { en } from '@/i18n/en';
+import { Chip } from '@/components/ui/chip';
 import { interpolate } from '@/i18n';
+import { en } from '@/i18n/en';
+import { studentText } from '@/i18n/student';
 
-export const metadata: Metadata = { title: 'Your application' };
+export const metadata: Metadata = { title: 'Your checklist' };
+
+const barLink =
+  'flex min-h-12 w-full items-center justify-center gap-2 rounded-sm bg-brand-500 px-4 font-semibold text-on-brand no-underline hover:bg-brand-700';
 
 /**
- * STUB (foundation). The student-UI agent replaces this with the full checklist /
- * profile flow. It demonstrates the contract: requireActor → service → components.
+ * Checklist home (design §6.2 screen 3, FR-CHK-1..5, FR-RUN-1/4): Runway, fee
+ * banner, progress ring, document cards, sticky Continue to the next undone item.
  */
 export default async function ApplyPage() {
   const actor = await requireActor(['student']);
   const app = await getOrCreateDraft(actor);
-  const checklist = await getChecklistForApplication(actor, app.id);
+  const c = await getChecklistForApplication(actor, app.id);
+  const t = studentText.checklist;
+  const draft = app.status === 'draft';
+  const fieldsMissing = draft && ((!app.noPass && !app.currentExpiry) || !app.requestedMonths);
+
+  // First visit / incomplete profile: start with the welcome questions.
+  if (draft && !c.profileComplete) redirect('/profile');
+
+  const next = nextUndone(c.items);
   const status = studentStatusCopy(app.status, { newExpiry: app.newExpiry });
+
   return (
     <div className="space-y-6">
       <div>
-        <h1>{status.label}</h1>
-        <p className="text-ink-muted">{status.explanation}</p>
+        <h1>{t.title}</h1>
+        <p className="mt-1 text-ink-muted">{draft ? status.explanation : t.submittedNote}</p>
       </div>
-      <Runway summary={checklist.runway} />
-      {checklist.profileComplete ? (
-        <>
-          <p className="rounded-sm border border-line bg-brand-100 p-3 text-sm">
-            {checklist.feeRequired ? interpolate(en.checklist.feeRequired, { amount: checklist.feeUsd }) : en.checklist.feeWaived}
+
+      <Runway summary={c.runway} />
+
+      {c.runway.band === 'expired' && (
+        <div role="note" className="flex gap-3 rounded-sm border border-[color-mix(in_srgb,var(--risk-expired)_50%,transparent)] bg-[color-mix(in_srgb,var(--risk-expired)_8%,var(--surface))] p-3 text-sm">
+          <TriangleAlert aria-hidden className="mt-0.5 size-5 shrink-0 text-risk-expired" />
+          <p>
+            <strong>{interpolate(t.penaltyEstimate, { amount: c.runway.penaltyUsd, rate: c.runway.penaltyUsdPerDay })}</strong>{' '}
+            <span className="text-ink-muted">{t.penaltyNote}</span>
           </p>
-          <p className="font-semibold">{interpolate(en.checklist.progress, checklist.progress)}</p>
+        </div>
+      )}
+
+      <p className="flex items-start gap-3 rounded-sm border border-line bg-brand-100 p-3 text-sm">
+        {c.feeRequired ? <Banknote aria-hidden className="mt-0.5 size-5 shrink-0" /> : <BadgeCheck aria-hidden className="mt-0.5 size-5 shrink-0 text-ok" />}
+        <span className="font-medium">{c.feeRequired ? interpolate(en.checklist.feeRequired, { amount: c.feeUsd }) : en.checklist.feeWaived}</span>
+      </p>
+
+      {fieldsMissing && (
+        <Link href="/profile?step=3" className="flex min-h-12 items-center gap-2 rounded-sm border border-warn p-3 font-semibold text-ink no-underline">
+          <TriangleAlert aria-hidden className="size-5 text-warn" />
+          {studentText.review.fieldIssue}
+        </Link>
+      )}
+
+      <div className="flex items-center justify-between gap-3">
+        <ProgressRing done={c.progress.done} total={c.progress.total} />
+        {draft && (
+          <Link href="/profile" className="inline-flex min-h-12 items-center gap-1.5 text-sm font-semibold">
+            <Pencil aria-hidden className="size-4" />
+            {t.editProfile}
+          </Link>
+        )}
+      </div>
+
+      <ul className="space-y-3">
+        {c.items.map((e) => (
+          <li key={e.item.code}>
+            <ChecklistCard
+              code={e.item.code}
+              name={e.item.name}
+              helpText={e.item.helpText}
+              whereToGet={e.item.whereToGet}
+              minFiles={e.item.minFiles}
+              universityAddition={e.item.universityAddition}
+              state={e.document?.state ?? 'missing'}
+              pagesDone={e.currentVersions}
+              canUpload={e.canUpload}
+              isNext={next?.item.code === e.item.code}
+            />
+          </li>
+        ))}
+      </ul>
+
+      {c.notRequired.length > 0 && (
+        <section aria-labelledby="not-required" className="space-y-2">
+          <h2 id="not-required" className="text-lg">
+            {t.notRequiredTitle}
+          </h2>
+          <p className="text-sm text-ink-muted">{t.notRequiredBody}</p>
           <ul className="space-y-2">
-            {checklist.items.map(({ item, document }) => {
-              const chip = documentStateChip(document?.state ?? 'missing');
+            {c.notRequired.map((d) => {
+              const chip = documentStateChip(d.state, false);
               return (
-                <li key={item.code} className="flex items-center justify-between gap-3 rounded-sm border border-line bg-surface p-3">
-                  <span>{item.name}</span>
+                <li key={d.id} className="flex items-center justify-between gap-3 rounded-sm border border-dashed border-line p-3 text-ink-muted">
+                  <span>{humanize(d.docCode)}</span>
                   <Chip tone={chip.tone}>{chip.label}</Chip>
                 </li>
               );
             })}
           </ul>
-        </>
-      ) : (
-        <p className="text-ink-muted">Complete your profile to see your checklist.</p>
+        </section>
       )}
+
+      <StickyBar>
+        {next ? (
+          <Link href={docHref(next.item.code)} className={barLink}>
+            {interpolate(t.continueNext, { doc: next.item.name })}
+            <ArrowRight aria-hidden className="size-4" />
+          </Link>
+        ) : draft ? (
+          <Link href="/review" className={barLink}>
+            {t.allDone}
+            <ArrowRight aria-hidden className="size-4" />
+          </Link>
+        ) : (
+          <Link href="/status" className={barLink}>
+            {t.viewStatus}
+            <ArrowRight aria-hidden className="size-4" />
+          </Link>
+        )}
+      </StickyBar>
     </div>
   );
 }

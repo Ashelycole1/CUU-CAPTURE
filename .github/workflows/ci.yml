@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main, 'build/**']
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Typecheck, lint, unit + integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+        env:
+          # Tests use temp SQLite files, local blobs and the dev outbox; no secrets needed.
+          NODE_ENV: test
+
+  e2e:
+    # Placeholder: enable by setting the repository variable RUN_E2E=true once e2e/ exists.
+    name: Playwright e2e
+    if: ${{ vars.RUN_E2E == 'true' }}
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run db:reset
+      - run: npx playwright test

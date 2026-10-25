@@ -1,0 +1,31 @@
+name: Health check and email retry
+
+# Optional, free. Every 6 hours:
+#  1. GET /api/health (fails the run, which emails the repo owner, if the site or DB is down);
+#  2. GET /api/cron/flush with CRON_SECRET: retries queued/failed emails (with backoff) and
+#     clears stale review claims between the once-a-day Vercel Hobby crons.
+# Needs repository variable APP_URL (e.g. https://visadesk.vercel.app) and secret CRON_SECRET.
+# Skips itself if APP_URL is not set.
+
+on:
+  schedule:
+    - cron: '20 */6 * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  ping:
+    if: ${{ vars.APP_URL != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Health
+        run: curl --fail --silent --show-error --max-time 30 "${{ vars.APP_URL }}/api/health"
+      - name: Flush notifications
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$CRON_SECRET" ]; then echo "CRON_SECRET not set; skipping flush"; exit 0; fi
+          curl --fail --silent --show-error --max-time 60 \
+            -H "Authorization: Bearer ${CRON_SECRET}" "${{ vars.APP_URL }}/api/cron/flush"
