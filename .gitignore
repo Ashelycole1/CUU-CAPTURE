@@ -1,0 +1,16 @@
+node_modules/
+.next/
+out/
+build/
+coverage/
+data/
+*.db
+*.db-wal
+*.db-shm
+.env
+.env*.local
+.vercel
+next-env.d.ts
+*.tsbuildinfo
+test-results/
+playwright-report/
