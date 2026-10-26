@@ -97,6 +97,38 @@ export async function prepareDocumentUpload(
   };
 }
 
+/**
+ * Upload idempotency (FR-UP-4): the ACTIVE version of `docCode`/`page` with this exact
+ * hash, if any, for an application OWNED by `actor`. One round trip (it used to load
+ * the whole application detail). Returns null for other students' applications.
+ */
+export async function findActiveVersionByHash(
+  actor: Actor,
+  input: { applicationId: string; docCode: string; page: number; sha256: string },
+): Promise<{ version: Pick<DocumentVersion, 'id' | 'page'>; doc: Pick<ApplicationDocument, 'id' | 'docCode' | 'state'> } | null> {
+  if (actor.role !== 'student') return null;
+  const row = (
+    await getDb()
+      .select({ versionId: documentVersions.id, page: documentVersions.page, docId: applicationDocuments.id, docCode: applicationDocuments.docCode, state: applicationDocuments.state })
+      .from(documentVersions)
+      .innerJoin(applicationDocuments, eq(applicationDocuments.id, documentVersions.applicationDocumentId))
+      .innerJoin(applications, eq(applications.id, documentVersions.applicationId))
+      .where(
+        and(
+          eq(applications.id, input.applicationId),
+          eq(applications.studentId, actor.id),
+          eq(applicationDocuments.docCode, input.docCode),
+          eq(documentVersions.page, input.page),
+          eq(documentVersions.sha256, input.sha256),
+          isNull(documentVersions.supersededAt),
+          isNull(documentVersions.deletedAt),
+        ),
+      )
+      .limit(1)
+  )[0];
+  return row ? { version: { id: row.versionId, page: row.page }, doc: { id: row.docId, docCode: row.docCode, state: row.state } } : null;
+}
+
 export interface RegisterVersionInput {
   applicationId: string;
   docCode: string;
@@ -491,12 +523,21 @@ export interface AuthorizedFile {
  */
 export async function authorizeVersionFile(actor: Actor, versionId: string, variant: FileVariant = 'original'): Promise<AuthorizedFile> {
   const db = getDb();
-  const v = (await db.select().from(documentVersions).where(eq(documentVersions.id, versionId)))[0];
-  if (!v || v.deletedAt) throw new NotFoundError('File');
-  const app = await loadApplication(db, v.applicationId);
-  if (!app || !canReadFile(actor, app, 'document')) throw new NotFoundError('File');
+  // One round trip: version + its application (for authz) + doc code.
+  const row = (
+    await db
+      .select({ v: documentVersions, app: applications, docCode: applicationDocuments.docCode })
+      .from(documentVersions)
+      .innerJoin(applications, eq(applications.id, documentVersions.applicationId))
+      .innerJoin(applicationDocuments, eq(applicationDocuments.id, documentVersions.applicationDocumentId))
+      .where(eq(documentVersions.id, versionId))
+      .limit(1)
+  )[0];
+  if (!row || row.v.deletedAt) throw new NotFoundError('File');
+  const { v, app } = row;
+  if (!canReadFile(actor, app, 'document')) throw new NotFoundError('File');
   assertCanReadApplication(actor, app);
-  const doc = (await db.select().from(applicationDocuments).where(eq(applicationDocuments.id, v.applicationDocumentId)))[0]!;
+  const doc = { docCode: row.docCode };
   const key = variant === 'thumb' ? (v.thumbKey ?? v.storageKey) : v.storageKey;
   if (fileViewIsAudited(actor)) {
     await withTx(async (tx) => {

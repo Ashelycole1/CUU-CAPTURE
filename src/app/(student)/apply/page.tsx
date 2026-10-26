@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation';
 import { ArrowRight, BadgeCheck, Banknote, Pencil, TriangleAlert } from 'lucide-react';
 import { requireActor } from '@/server/auth/current';
 import { getChecklistForApplication, getOrCreateDraft } from '@/server/services';
+import { getMyDeletionRequest } from '@/server/services/privacy';
 import { Runway } from '@/components/runway';
 import { ChecklistCard } from '@/components/student/checklist-card';
 import { ProgressRing } from '@/components/student/progress-ring';
@@ -26,6 +27,8 @@ const barLink =
  */
 export default async function ApplyPage() {
   const actor = await requireActor(['student']);
+  // A pending deletion request: don't start a new draft (it would block the admin's approval).
+  if ((await getMyDeletionRequest(actor))?.status === 'pending') redirect('/status');
   const app = await getOrCreateDraft(actor);
   const c = await getChecklistForApplication(actor, app.id);
   const t = studentText.checklist;

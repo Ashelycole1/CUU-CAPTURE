@@ -6,7 +6,7 @@ import { getDb } from '@/server/db/client';
 import { ConflictError, InvalidStateError, ValidationError } from '@/server/errors';
 import { assertSameOrigin, route } from '@/server/http';
 import {
-  getApplicationDetail,
+  findActiveVersionByHash,
   prepareDocumentUpload,
   registerDocumentVersion,
 } from '@/server/services';
@@ -67,11 +67,8 @@ function parseQuality(raw: FormDataEntryValue | null) {
 }
 
 /** Same bytes already active for this slot? (retry after a dropped response) */
-async function findActiveDuplicate(actor: Actor, applicationId: string, docCode: string, page: number, sha256: string) {
-  const detail = await getApplicationDetail(actor, applicationId);
-  const doc = detail.documents.find((d) => d.docCode === docCode);
-  const v = doc?.versions.find((x) => x.page === page && !x.supersededAt && !x.deletedAt && x.sha256 === sha256);
-  return v && doc ? { version: v, doc } : null;
+function findActiveDuplicate(actor: Actor, applicationId: string, docCode: string, page: number, sha256: string) {
+  return findActiveVersionByHash(actor, { applicationId, docCode, page, sha256 });
 }
 
 export const POST = route(async (req) => {

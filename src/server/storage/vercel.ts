@@ -21,7 +21,11 @@ export class VercelBlobStore implements BlobStore {
   }
 
   async get(key: string): Promise<Uint8Array | null> {
-    const res = await get(key, { access: 'private', token: this.token, useCache: false });
+    // Pathnames are immutable (random suffix, never overwritten) and the bytes are
+    // ciphertext, so the Blob CDN cache can never serve stale or readable content.
+    // Cache HITs do not count as Blob "simple operations" (Hobby: 10,000/month;
+    // docs/PERFORMANCE.md §5.2), so repeat views of a file cost no quota.
+    const res = await get(key, { access: 'private', token: this.token, useCache: true });
     if (!res || res.statusCode !== 200) return null;
     return new Uint8Array(await new Response(res.stream).arrayBuffer());
   }

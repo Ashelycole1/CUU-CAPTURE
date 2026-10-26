@@ -173,7 +173,7 @@ export function ApplicationsTable({ rows, total }: { rows: DashboardRow[]; total
               <th scope="col" className="px-3 py-2">{T.columns.fee}</th>
               <th scope="col" className="px-3 py-2">{T.columns.activity}</th>
               <th scope="col" className="w-8 px-2 py-2">
-                <span className="sr-only">{staffText.common.close}</span>
+                <span className="sr-only">{T.openColumn}</span>
               </th>
             </tr>
           </thead>

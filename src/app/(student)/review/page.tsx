@@ -107,15 +107,16 @@ export default async function ReviewPage() {
         </h2>
         <dl className="divide-y divide-line rounded-md border border-line bg-surface">
           {details.map((d) => (
-            <div key={d.label} className="flex items-center justify-between gap-3 p-3">
-              <div className="min-w-0">
-                <dt className="text-sm text-ink-muted">{d.label}</dt>
-                <dd className="font-medium break-words">{d.value}</dd>
-              </div>
-              <Link href={d.href} className="inline-flex min-h-12 shrink-0 items-center px-2 text-sm font-semibold">
-                {r.edit}
-                <span className="sr-only"> {d.label}</span>
-              </Link>
+            <div key={d.label} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 p-3">
+              <dt className="text-sm text-ink-muted">{d.label}</dt>
+              <dd className="col-start-1 font-medium break-words">{d.value}</dd>
+              {/* The edit link lives in its own <dd> so the <dl> only holds dt/dd groups (axe definition-list). */}
+              <dd className="col-start-2 row-span-2 row-start-1">
+                <Link href={d.href} className="inline-flex min-h-12 shrink-0 items-center px-2 text-sm font-semibold">
+                  {r.edit}
+                  <span className="sr-only"> {d.label}</span>
+                </Link>
+              </dd>
             </div>
           ))}
         </dl>

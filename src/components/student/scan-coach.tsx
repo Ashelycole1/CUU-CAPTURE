@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type DragEvent } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowRight, Camera, Check, FolderOpen, ImagePlus, Plus, RotateCw, ScanLine, Video, WifiOff } from 'lucide-react';
@@ -68,6 +68,9 @@ export interface ScanCoachProps {
  * → convert to JPEG → quality checks in a worker → upload with progress and retry.
  * One document per screen; multi-page items show page slots (FR-CHK-5).
  */
+const noSubscribe = () => () => {};
+const hasGetUserMedia = () => !!navigator.mediaDevices?.getUserMedia;
+
 export function ScanCoach(p: ScanCoachProps) {
   const c = studentText.capture;
   const router = useRouter();
@@ -81,6 +84,9 @@ export function ScanCoach(p: ScanCoachProps) {
   const [notice, setNotice] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [camera, setCamera] = useState(false);
+  // Feature-detect on the client only: reading `navigator` during render caused a hydration
+  // mismatch. The server snapshot (false) is used for SSR and hydration, then the real value.
+  const hasLiveCamera = useSyncExternalStore(noSubscribe, hasGetUserMedia, () => false);
   const cameraInput = useRef<HTMLInputElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const firstAction = useRef<HTMLButtonElement>(null);
@@ -326,7 +332,7 @@ export function ScanCoach(p: ScanCoachProps) {
           <Button ref={firstAction} fullWidth size="lg" onClick={() => cameraInput.current?.click()} icon={<Camera aria-hidden className="size-5" />}>
             {c.takePhoto}
           </Button>
-          {typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia && (
+          {hasLiveCamera && (
             <Button fullWidth variant="secondary" onClick={() => setCamera(true)} icon={<Video aria-hidden className="size-5" />}>
               {c.liveCamera}
             </Button>

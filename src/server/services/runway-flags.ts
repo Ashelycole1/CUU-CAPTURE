@@ -10,7 +10,7 @@ import { riskBand, RISK_RANK } from '@/domain/rules';
 import type { RiskBand } from '@/domain/types';
 import { assertStaff, type Actor } from '../authz';
 import { getDb } from '../db/client';
-import { profiles, runwayFlags, students } from '../db/schema';
+import { applications, profiles, runwayFlags, students } from '../db/schema';
 
 export interface RunwayFlagView {
   flagId: string;
@@ -27,9 +27,12 @@ export interface RunwayFlagView {
   daysToExpiry: number;
   flaggedAt: string;
   emailBounced: boolean;
+  /** The student's draft application, if they started one (null = no application at all). */
+  draftApplicationId: string | null;
 }
 
-export async function listOpenRunwayFlags(actor: Actor, opts: { limit?: number; today?: string } = {}): Promise<RunwayFlagView[]> {
+/** Open flags, most urgent first. `studentId` narrows to one student (staff detail page). */
+export async function listOpenRunwayFlags(actor: Actor, opts: { limit?: number; today?: string; studentId?: string } = {}): Promise<RunwayFlagView[]> {
   assertStaff(actor);
   const today = opts.today ?? todayInKampala();
   const rows = await getDb()
@@ -44,11 +47,12 @@ export async function listOpenRunwayFlags(actor: Actor, opts: { limit?: number; 
       emailStatus: profiles.emailStatus,
       studentNo: students.studentNo,
       nationality: students.nationality,
+      draftApplicationId: sql<string | null>`(select ${applications.id} from ${applications} where ${applications.studentId} = ${runwayFlags.studentId} and ${applications.status} = 'draft' limit 1)`,
     })
     .from(runwayFlags)
     .innerJoin(profiles, eq(profiles.id, runwayFlags.studentId))
     .leftJoin(students, eq(students.profileId, runwayFlags.studentId))
-    .where(and(isNull(runwayFlags.resolvedAt), isNull(profiles.deletedAt)))
+    .where(and(isNull(runwayFlags.resolvedAt), isNull(profiles.deletedAt), opts.studentId ? eq(runwayFlags.studentId, opts.studentId) : undefined))
     .orderBy(asc(runwayFlags.expiry), sql`${runwayFlags.flaggedAt} desc`)
     .limit(Math.min(opts.limit ?? 100, 500));
   return rows
@@ -65,6 +69,7 @@ export async function listOpenRunwayFlags(actor: Actor, opts: { limit?: number; 
       daysToExpiry: diffDays(r.expiry, today),
       flaggedAt: r.flaggedAt,
       emailBounced: r.emailStatus === 'bounced',
+      draftApplicationId: r.draftApplicationId ?? null,
     }))
     .sort((a, b) => RISK_RANK[a.band] - RISK_RANK[b.band] || a.expiry.localeCompare(b.expiry));
 }

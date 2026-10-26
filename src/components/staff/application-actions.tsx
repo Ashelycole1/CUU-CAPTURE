@@ -149,6 +149,8 @@ export interface ClaimInfo {
   mine: boolean;
   other: boolean;
   until: string | null;
+  /** Display name of the other reviewer (getProfileNames), if known. */
+  byName?: string | null;
 }
 
 /** Claim banner + claim/release (FR-REV-6) for reviewable applications. */
@@ -159,7 +161,7 @@ export function ClaimControl({ applicationId, claim }: { applicationId: string; 
     <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-line bg-paper px-3 py-2 text-sm">
       <p className="flex items-center gap-2">
         {claim.mine || claim.other ? <Lock aria-hidden className="size-4" /> : <LockOpen aria-hidden className="size-4" />}
-        {claim.mine ? fmt(C.mine, { time }) : claim.other ? fmt(C.other, { time }) : C.none}
+        {claim.mine ? fmt(C.mine, { time }) : claim.other ? (claim.byName ? fmt(C.otherNamed, { name: claim.byName, time }) : fmt(C.other, { time })) : C.none}
       </p>
       {claim.mine ? (
         <Button size="sm" variant="ghost" loading={pending} onClick={() => run(() => releaseClaimAction(applicationId), C.release)}>

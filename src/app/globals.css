@@ -22,18 +22,19 @@
   --surface: #ffffff;
 
   /* Risk bands (always paired with icon + text) */
-  --risk-safe: #1f8a5b;
-  --risk-plan: #2f6fdb;
-  --risk-urgent: #a86600; /* darkened from #c77a00 for 4.5:1 text contrast on paper */
+  /* Light-theme text colours are tuned for >= 4.5:1 on paper AND on 10% tinted chips (axe, Wave 3). */
+  --risk-safe: #17724b;
+  --risk-plan: #2459c4;
+  --risk-urgent: #935900; /* darkened from #c77a00, then #a86600, for 4.5:1 on paper and tinted chips */
   --risk-critical: #c2410c;
   --risk-expired: #b42318;
   --risk-nopass: #6b7280;
 
   /* Status */
-  --ok: #1f8a5b;
-  --warn: #a86600;
+  --ok: #17724b;
+  --warn: #935900;
   --bad: #b42318;
-  --info: #2f6fdb;
+  --info: #2459c4;
   --teal: #0f766e;
 
   /* Text on brand/primary buttons */

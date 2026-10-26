@@ -20,11 +20,12 @@ import { applyBy, formatDate, formatDateTime } from '@/domain';
 import { fmt, staffText } from '@/i18n/staff';
 import { assertStaff, type Actor } from '../authz';
 import { getDb } from '../db/client';
-import { profiles, ruleSets, type PacketManifest, type PacketManifestEntry } from '../db/schema';
+import { profiles, type PacketManifest, type PacketManifestEntry } from '../db/schema';
 import { InvalidStateError, ValidationError } from '../errors';
 import { getBlobStore, blobKeys } from '../storage';
 import { getApplicationDetail, type ApplicationDetail } from './applications';
 import { completePacket, failPacket, startPacket, type PacketView } from './packets';
+import { loadRuleSet } from './internal';
 
 /** In-memory build limit (sum of document bytes). Keeps the function well inside Vercel memory/time. */
 export const MAX_PACKET_BYTES = 25 * 1024 * 1024;
@@ -176,7 +177,7 @@ export async function buildPacket(actor: Actor, applicationId: string, now: Date
   const db = getDb();
   const [approver, ruleSet] = await Promise.all([
     app.approvedBy ? db.select({ fullName: profiles.fullName, email: profiles.email }).from(profiles).where(eq(profiles.id, app.approvedBy)).then((r) => r[0]) : undefined,
-    db.select({ applyBeforeDays: ruleSets.applyBeforeDays }).from(ruleSets).where(eq(ruleSets.id, app.ruleSetId)).then((r) => r[0]),
+    loadRuleSet(db, app.ruleSetId), // usually from the per-instance read cache
   ]);
 
   const packet = await startPacket(actor, app.id);

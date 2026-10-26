@@ -47,6 +47,7 @@ import {
   loadApplication,
   loadRuleSet,
   nowIso,
+  parallelReads,
   recordEvent,
   transition,
   withTx,
@@ -64,10 +65,17 @@ const ACTIVE = ACTIVE_STATUSES as unknown as ApplicationRow['status'][];
 // ---------------------------------------------------------------- helpers
 
 async function loadStudent(tx: DbOrTx, profileId: string): Promise<{ profile: ProfileRow; student: StudentRow | undefined }> {
-  const profile = (await tx.select().from(profiles).where(eq(profiles.id, profileId)))[0];
+  const loadProfile = () => tx.select().from(profiles).where(eq(profiles.id, profileId)).then((r) => r[0]);
+  // Outside a transaction both lookups go out together (one round trip on the critical
+  // path); inside an interactive transaction statements stay sequential.
+  const [profile, student] =
+    tx === getDb() ? await parallelReads(loadProfile, () => loadStudentRow(tx, profileId)) : [await loadProfile(), await loadStudentRow(tx, profileId)];
   if (!profile) throw new NotFoundError('Profile');
-  const student = (await tx.select().from(students).where(eq(students.profileId, profileId)))[0];
   return { profile, student };
+}
+
+async function loadStudentRow(tx: DbOrTx, profileId: string): Promise<StudentRow | undefined> {
+  return (await tx.select().from(students).where(eq(students.profileId, profileId)))[0];
 }
 
 async function ensureStudentRow(tx: DbOrTx, profileId: string): Promise<StudentRow> {
@@ -136,6 +144,10 @@ export async function syncApplicationDocuments(tx: DbOrTx, app: ApplicationRow, 
  */
 export async function getOrCreateDraft(actor: Actor): Promise<Application> {
   assertRole(actor, ['student']);
+  // Fast path (every /apply and /profile view): a plain read, no write lock. Only a
+  // student WITHOUT an active application pays for the write transaction below.
+  const current = await findActiveApplication(getDb(), actor.id);
+  if (current) return current;
   try {
     return await withTx(async (tx) => {
       const existing = await findActiveApplication(tx, actor.id);
@@ -194,6 +206,8 @@ export interface StudentProfileView {
   phone: string | null;
   passExpiry: string | null;
   noPass: boolean;
+  /** A permanent bounce or complaint was recorded (D-J10): show "Student unreachable". */
+  emailBounced: boolean;
 }
 
 function toProfileView(profile: ProfileRow, student: StudentRow | undefined): StudentProfileView {
@@ -208,6 +222,7 @@ function toProfileView(profile: ProfileRow, student: StudentRow | undefined): St
     phone: student?.phone ?? null,
     passExpiry: student?.passExpiry ?? null,
     noPass: student?.noPass ?? false,
+    emailBounced: profile.emailStatus === 'bounced',
   };
 }
 
@@ -319,14 +334,32 @@ export async function getChecklistForApplication(actor: Actor, applicationId: st
   const app = await loadApplication(db, applicationId);
   assertCanReadApplication(actor, app);
   const full = app as ApplicationRow;
-  const { student } = await loadStudent(db, full.studentId);
-  const ruleSet = await loadRuleSet(db, full.ruleSetId);
-  const docs = await db.select().from(applicationDocuments).where(eq(applicationDocuments.applicationId, full.id));
-  const versions = await db
-    .select()
-    .from(documentVersions)
-    .where(and(eq(documentVersions.applicationId, full.id), isNull(documentVersions.supersededAt), isNull(documentVersions.deletedAt)))
-    .orderBy(asc(documentVersions.page));
+  // Authorized: everything else in one parallel wave (rule set usually from the read cache).
+  const [student, ruleSet, docs, versions] = await parallelReads(
+    () => loadStudentRow(db, full.studentId),
+    () => loadRuleSet(db, full.ruleSetId),
+    () => db.select().from(applicationDocuments).where(eq(applicationDocuments.applicationId, full.id)),
+    () =>
+      db
+        .select()
+        .from(documentVersions)
+        .where(and(eq(documentVersions.applicationId, full.id), isNull(documentVersions.supersededAt), isNull(documentVersions.deletedAt)))
+        .orderBy(asc(documentVersions.page)),
+  );
+  return buildChecklistView(actor, full, student, ruleSet, docs, versions, today);
+}
+
+/** Pure: checklist view from already-authorized rows (`versions` = current versions, any order). */
+function buildChecklistView(
+  actor: Actor,
+  full: ApplicationRow,
+  student: StudentRow | undefined,
+  ruleSet: RuleSet,
+  docs: ApplicationDocument[],
+  allCurrent: DocumentVersion[],
+  today: string,
+): ChecklistView {
+  const versions = [...allCurrent].sort((a, b) => a.page - b.page);
   const profileComplete = Boolean(student?.studentType && student.nationality);
   const checklist = profileComplete
     ? computeChecklist(ruleSet, { studentType: student!.studentType!, nationality: student!.nationality! })
@@ -491,26 +524,40 @@ export async function getApplicationDetail(actor: Actor, applicationId: string):
   assertCanReadApplication(actor, app);
   const full = app as ApplicationRow;
   const staff = isStaff(actor);
-  const [student, checklist, docs, versions, events, msgs, pays, pkts, ruleSet] = await Promise.all([
-    loadStudent(db, full.studentId).then(({ profile, student }) => toProfileView(profile, student)),
-    getChecklistForApplication(actor, full.id),
-    db.select().from(applicationDocuments).where(eq(applicationDocuments.applicationId, full.id)),
-    db.select().from(documentVersions).where(and(eq(documentVersions.applicationId, full.id), isNull(documentVersions.deletedAt))).orderBy(asc(documentVersions.seq)),
-    db
-      .select()
-      .from(applicationEvents)
-      .where(staff ? eq(applicationEvents.applicationId, full.id) : and(eq(applicationEvents.applicationId, full.id), eq(applicationEvents.visibleToStudent, true)))
-      .orderBy(asc(applicationEvents.at)),
-    db
-      .select()
-      .from(messages)
-      .where(canSeeInternalNotes(actor) ? eq(messages.applicationId, full.id) : and(eq(messages.applicationId, full.id), eq(messages.internal, false)))
-      .orderBy(asc(messages.at)),
-    staff ? db.select().from(payments).where(eq(payments.applicationId, full.id)) : Promise.resolve([]),
-    staff ? db.select().from(packets).where(eq(packets.applicationId, full.id)).orderBy(desc(packets.createdAt)) : Promise.resolve([]),
-    loadRuleSet(db, full.ruleSetId),
-  ]);
+  // One parallel wave after the authorization read. The checklist is built from the
+  // same rows (it used to re-load the application, student, rule set, documents and
+  // versions: 7 extra round trips per detail view).
+  const [{ profile, student: studentRow }, docs, versions, events, msgs, pays, pkts, ruleSet] = await parallelReads(
+    () => loadStudent(db, full.studentId),
+    () => db.select().from(applicationDocuments).where(eq(applicationDocuments.applicationId, full.id)),
+    () => db.select().from(documentVersions).where(and(eq(documentVersions.applicationId, full.id), isNull(documentVersions.deletedAt))).orderBy(asc(documentVersions.seq)),
+    () =>
+      db
+        .select()
+        .from(applicationEvents)
+        .where(staff ? eq(applicationEvents.applicationId, full.id) : and(eq(applicationEvents.applicationId, full.id), eq(applicationEvents.visibleToStudent, true)))
+        .orderBy(asc(applicationEvents.at)),
+    () =>
+      db
+        .select()
+        .from(messages)
+        .where(canSeeInternalNotes(actor) ? eq(messages.applicationId, full.id) : and(eq(messages.applicationId, full.id), eq(messages.internal, false)))
+        .orderBy(asc(messages.at)),
+    () => (staff ? db.select().from(payments).where(eq(payments.applicationId, full.id)) : Promise.resolve([])),
+    () => (staff ? db.select().from(packets).where(eq(packets.applicationId, full.id)).orderBy(desc(packets.createdAt)) : Promise.resolve([])),
+    () => loadRuleSet(db, full.ruleSetId),
+  );
   const application: Application = staff ? full : { ...full, claimedBy: null, claimedUntil: null, approvedBy: null };
+  const student = toProfileView(profile, studentRow);
+  const checklist = buildChecklistView(
+    actor,
+    full,
+    studentRow,
+    ruleSet,
+    docs,
+    versions.filter((v) => !v.supersededAt),
+    todayInKampala(),
+  );
   return {
     application,
     student,

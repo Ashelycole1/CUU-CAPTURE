@@ -9,11 +9,14 @@ import { requireActorOrThrow } from '@/server/auth/current';
 import { toErrorBody } from '@/server/errors';
 import { flushNotifications } from '@/server/notify';
 import {
+  getMyActiveApplication,
   postMessage,
   submitApplication,
   updateApplicationFields,
   updateStudentProfile,
+  withdrawApplication,
 } from '@/server/services';
+import { cancelDeletionRequest, requestAccountDeletion } from '@/server/services/privacy';
 import type { ApplicationFieldsPatch, ProfilePatch } from '@/domain/schemas';
 
 export interface ActionError {
@@ -78,6 +81,37 @@ export async function postMessageAction(applicationId: string, body: string): Pr
     await postMessage(actor, applicationId, { body, internal: false });
     after(() => flushNotifications());
     revalidatePath('/messages');
+    return { ok: true, data: null };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/**
+ * Ask for account deletion (FR-AUD-3, SECURITY §6). Only allowed without an active
+ * application; an unsubmitted draft is withdrawn first when the student confirmed that.
+ * An admin approves the request on /retention.
+ */
+export async function requestAccountDeletionAction(withdrawDraft: boolean): Promise<ActionResult> {
+  try {
+    const actor = await requireActorOrThrow(['student']);
+    const active = await getMyActiveApplication(actor);
+    if (active?.status === 'draft' && withdrawDraft) await withdrawApplication(actor, active.id);
+    await requestAccountDeletion(actor);
+    after(() => flushNotifications());
+    revalidatePath('/status');
+    return { ok: true, data: null };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** Withdraw a pending deletion request. */
+export async function cancelAccountDeletionAction(): Promise<ActionResult> {
+  try {
+    const actor = await requireActorOrThrow(['student']);
+    await cancelDeletionRequest(actor);
+    revalidatePath('/status');
     return { ok: true, data: null };
   } catch (e) {
     return fail(e);

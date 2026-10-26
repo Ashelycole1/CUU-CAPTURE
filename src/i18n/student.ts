@@ -232,6 +232,24 @@ export const studentText = {
     sent: 'Message sent.',
     noApplication: 'Start your application to message the Dean of Students.',
   },
+  account: {
+    title: 'Your data',
+    intro: 'You can ask the Dean of Students to delete your account, your documents and your personal details.',
+    blockedActive: 'You can ask for deletion once your current application is finished or withdrawn.',
+    request: 'Delete my account',
+    dialogTitle: 'Delete your account?',
+    dialogBody:
+      'The Dean of Students will check your request. When it is approved, all your uploaded documents and your personal details are deleted and you can no longer sign in. This cannot be undone.',
+    dialogKept: 'A record that an application existed (dates and status only, no names or documents) and the security log are kept. Copies in backups disappear within 30 days.',
+    dialogDraft: 'Your unsubmitted draft application will be withdrawn.',
+    confirm: 'Yes, ask to delete my account',
+    keep: 'Keep my account',
+    pending: 'You asked for your account to be deleted on {date}. The Dean of Students will review it soon.',
+    cancel: 'Cancel my request',
+    requested: 'Request sent to the Dean of Students.',
+    cancelled: 'Your deletion request was cancelled.',
+    rejected: 'Your last deletion request was not approved. Message the Dean of Students if you have questions.',
+  },
   fixNow: 'Fix now',
 } as const;
 

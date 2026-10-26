@@ -1,10 +1,11 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ArrowLeft, ClipboardCheck } from 'lucide-react';
+import { ArrowLeft, ClipboardCheck, Flag, MailX } from 'lucide-react';
 import { requireActor } from '@/server/auth/current';
 import { isServiceError } from '@/server/errors';
-import { getApplicationDetail, listReasonTemplates, type ApplicationDetail } from '@/server/services';
+import { getApplicationDetail, getProfileNames, listReasonTemplates, type ApplicationDetail } from '@/server/services';
+import { listOpenRunwayFlags } from '@/server/services/runway-flags';
 import { getPacketPlan } from '@/server/services/packet-builder';
 import { Runway } from '@/components/runway';
 import { Chip } from '@/components/ui/chip';
@@ -89,8 +90,14 @@ export default async function ApplicationDetailPage({ params }: { params: Promis
     if (isServiceError(e) && e.code === 'NOT_FOUND') notFound();
     throw e;
   }
-  const [templates, plan] = await Promise.all([listReasonTemplates(actor, { includeInactive: true }), getPacketPlan(actor, id, detail)]);
   const { application: app, student, checklist } = detail;
+  const actorIds = [...detail.events.map((e) => e.actorId), ...detail.messages.map((m) => m.senderId), app.claimedBy];
+  const [templates, plan, names, flags] = await Promise.all([
+    listReasonTemplates(actor, { includeInactive: true }),
+    getPacketPlan(actor, id, detail),
+    getProfileNames(actor, actorIds),
+    listOpenRunwayFlags(actor, { studentId: student.profileId }),
+  ]);
   const today = todayInKampala();
   const now = new Date().toISOString();
 
@@ -98,7 +105,7 @@ export default async function ApplicationDetailPage({ params }: { params: Promis
   const docName = (code: string) => docNames.get(code) ?? code.replace(/_/g, ' ');
   const reason = (code: string | null | undefined) => (code ? (templates.find((t) => t.code === code)?.label ?? code) : null);
   const who = (actorId: string | null) =>
-    actorId === null ? staffText.common.system : actorId === actor.id ? staffText.common.you : actorId === student.profileId ? (student.fullName ?? staffText.common.student) : staffText.common.staff;
+    actorId === null ? staffText.common.system : actorId === actor.id ? staffText.common.you : actorId === student.profileId ? (student.fullName ?? staffText.common.student) : (names[actorId] ?? staffText.common.staff);
 
   const docsByCode = new Map(detail.documents.map((d) => [d.docCode, d]));
   const toGrid = (code: string, name: string): GridDocument => {
@@ -179,7 +186,15 @@ export default async function ApplicationDetailPage({ params }: { params: Promis
 
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl md:text-3xl">{student.fullName ?? student.email}</h1>
+          <h1 className="flex flex-wrap items-center gap-2 text-2xl md:text-3xl">
+            {student.fullName ?? student.email}
+            {student.emailBounced && (
+              <Chip tone="bad" icon={MailX} className="font-sans text-sm">
+                <span title={staffText.dashboard.unreachableHint}>{staffText.dashboard.unreachable}</span>
+              </Chip>
+            )}
+          </h1>
+          {student.emailBounced && <p className="sr-only">{staffText.dashboard.unreachableHint}</p>}
           <p className="mt-1 flex flex-wrap items-center gap-2 text-sm text-ink-muted">
             <span className="font-mono tabular">{app.ref ?? '-'}</span>
             <span aria-hidden>·</span>
@@ -215,6 +230,22 @@ export default async function ApplicationDetailPage({ params }: { params: Promis
             </dl>
           </section>
           <Runway summary={checklist.runway} />
+          {flags.length > 0 && (
+            <section aria-labelledby="flags-title" className="rounded-md border border-line bg-surface p-4 shadow-1">
+              <h2 id="flags-title" className="flex items-center gap-2 font-sans text-base font-semibold">
+                <Flag aria-hidden className="size-4 text-risk-urgent" />
+                {D.flagsTitle}
+              </h2>
+              <ul className="mt-2 space-y-1 text-sm">
+                {flags.map((f) => (
+                  <li key={f.flagId}>
+                    <span className="font-semibold">{f.day < 0 ? D.flagExpired : fmt(D.flagStage, { day: f.day })}</span>{' '}
+                    <span className="text-ink-muted">{fmt(D.flaggedOn, { date: formatDateTime(f.flaggedAt) })}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
           <FeePanel
             applicationId={app.id}
             feeStatus={app.feeStatus}
@@ -252,7 +283,7 @@ export default async function ApplicationDetailPage({ params }: { params: Promis
         {/* Right: actions, messages, timeline */}
         <div className="space-y-4">
           <section className="space-y-3 rounded-md border border-line bg-surface p-4 shadow-1">
-            {reviewable && <ClaimControl applicationId={app.id} claim={{ mine: claimActive && app.claimedBy === actor.id, other: claimActive && app.claimedBy !== actor.id, until: app.claimedUntil }} />}
+            {reviewable && <ClaimControl applicationId={app.id} claim={{ mine: claimActive && app.claimedBy === actor.id, other: claimActive && app.claimedBy !== actor.id, until: app.claimedUntil, byName: app.claimedBy ? (names[app.claimedBy] ?? null) : null }} />}
             <ApplicationActions applicationId={app.id} status={app.status} allApproved={allApproved} today={today} />
           </section>
           <section aria-labelledby="msg-title" className="rounded-md border border-line bg-surface p-4 shadow-1">

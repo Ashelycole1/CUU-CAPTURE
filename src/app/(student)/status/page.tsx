@@ -4,6 +4,8 @@ import { ArrowRight, MessageSquare, TriangleAlert, Wrench } from 'lucide-react';
 import { requireActor } from '@/server/auth/current';
 import { getApplicationDetail, getMyActiveApplication, listMyApplications } from '@/server/services';
 import { getReasonLabelsForApplication } from '@/server/services/student-view';
+import { getMyDeletionRequest } from '@/server/services/privacy';
+import { AccountDeletion } from '@/components/student/account-deletion';
 import { Chip } from '@/components/ui/chip';
 import { Runway } from '@/components/runway';
 import { CopyRef } from '@/components/student/copy-ref';
@@ -23,8 +25,15 @@ const primaryLink =
 export default async function StatusPage() {
   const actor = await requireActor(['student']);
   const s = studentText.status;
-  const active = await getMyActiveApplication(actor);
+  const [active, deletion] = await Promise.all([getMyActiveApplication(actor), getMyDeletionRequest(actor)]);
   const app = active ?? (await listMyApplications(actor))[0] ?? null;
+  const account = (
+    <AccountDeletion
+      request={deletion ? { status: deletion.status, requestedAt: deletion.requestedAt } : null}
+      blockedByActive={!!active && active.status !== 'draft'}
+      hasDraft={active?.status === 'draft'}
+    />
+  );
 
   if (!app) {
     return (
@@ -35,6 +44,7 @@ export default async function StatusPage() {
           {s.start}
           <ArrowRight aria-hidden className="size-4" />
         </Link>
+        <div className="text-left">{account}</div>
       </div>
     );
   }
@@ -105,6 +115,8 @@ export default async function StatusPage() {
         </h2>
         <Timeline entries={entries} label={s.timeline} />
       </section>
+
+      {account}
 
       <StickyBar>
         {app.status === 'draft' ? (

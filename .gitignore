@@ -14,3 +14,5 @@ next-env.d.ts
 *.tsbuildinfo
 test-results/
 playwright-report/
+data-e2e/
+data-perf/

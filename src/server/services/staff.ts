@@ -411,17 +411,18 @@ export async function getDashboardSummary(actor: Actor, today: string = todayInK
         ),
         readyForImmigration: count(sql`${applications.status} = 'approved'`),
         feesUnpaid: count(sql`${applications.feeStatus} = 'unpaid' and ${applications.status} not in ('draft','withdrawn','closed')`),
+        // Folded into the same statement: one round trip for the whole summary.
+        openRunwayFlags: sql<number>`(select count(*) from ${runwayFlags} where ${runwayFlags.resolvedAt} is null)`,
       })
       .from(applications)
   )[0];
-  const flags = await db.select({ n: sql<number>`count(*)` }).from(runwayFlags).where(isNull(runwayFlags.resolvedAt));
   return {
     needsReview: Number(row?.needsReview ?? 0),
     correctionsPending: Number(row?.correctionsPending ?? 0),
     criticalOrExpired: Number(row?.criticalOrExpired ?? 0),
     readyForImmigration: Number(row?.readyForImmigration ?? 0),
     feesUnpaid: Number(row?.feesUnpaid ?? 0),
-    openRunwayFlags: Number(flags[0]?.n ?? 0),
+    openRunwayFlags: Number(row?.openRunwayFlags ?? 0),
   };
 }
 
@@ -514,6 +515,23 @@ export async function setProfileStatus(actor: Actor, profileId: string, status: 
     if (status === 'disabled') await revokeAllSessionsFor(tx, profileId);
     await audit(tx, actor, 'profile.status_set', { type: 'profile', id: profileId }, { status });
   });
+}
+
+/**
+ * Staff: display names for actor ids shown in timelines, messages and claims
+ * (ST-08). Returns `{ id: name }` for staff/admin/liaison accounts and students;
+ * falls back to the email's local part when no name is set. Unknown or deleted
+ * profiles are omitted, so callers keep their own fallback ("Staff"/"System").
+ */
+export async function getProfileNames(actor: Actor, ids: readonly (string | null | undefined)[]): Promise<Record<string, string>> {
+  assertStaff(actor);
+  const wanted = [...new Set(ids.filter((x): x is string => !!x && x !== 'system'))].slice(0, 200);
+  if (!wanted.length) return {};
+  const rows = await getDb()
+    .select({ id: profiles.id, fullName: profiles.fullName, email: profiles.email })
+    .from(profiles)
+    .where(and(inArray(profiles.id, wanted), isNull(profiles.deletedAt)));
+  return Object.fromEntries(rows.map((r) => [r.id, r.fullName?.trim() || r.email.split('@')[0]!]));
 }
 
 /** Admin: list staff/admin/liaison accounts. */

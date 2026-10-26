@@ -81,6 +81,7 @@ export function DocumentGrid({ applicationId, documents, reviewable }: { applica
               >
                 <ClipboardCheck aria-hidden className="size-4" />
                 {D.reviewInMode}
+                <span className="sr-only">: {d.name}</span>
               </Link>
             )}
           </li>

@@ -3,11 +3,10 @@ import 'server-only';
  * Student-facing read helpers (added by the student UI agent; read-only, additive).
  * Follows the service rules: actor first, authorize before reading.
  */
-import { inArray } from 'drizzle-orm';
 import { assertCanReadApplication, type Actor } from '../authz';
 import { getDb } from '../db/client';
-import { reasonTemplates } from '../db/schema';
 import { loadApplication } from './internal';
+import { loadReasonTemplatesCached } from './rules';
 
 export interface ReasonLabel {
   code: string;
@@ -28,6 +27,8 @@ export async function getReasonLabelsForApplication(actor: Actor, applicationId:
   assertCanReadApplication(actor, app);
   const wanted = [...new Set(codes.filter(Boolean))].slice(0, 50);
   if (!wanted.length) return {};
-  const rows = await db.select().from(reasonTemplates).where(inArray(reasonTemplates.code, wanted));
+  // Templates are global (not personal) and cached per instance; filter after authz.
+  const want = new Set(wanted);
+  const rows = (await loadReasonTemplatesCached()).filter((r) => want.has(r.code));
   return Object.fromEntries(rows.map((r) => [r.code, { code: r.code, label: r.label, body: r.body }]));
 }

@@ -17,7 +17,7 @@ export default async function StudentLayout({ children }: { children: React.Reac
       <StudentNav />
       <OfflineBanner />
       <PendingUploads />
-      <main id="main" className="mx-auto w-full max-w-[560px] px-4 py-6 pb-36">
+      <main id="main" tabIndex={-1} className="mx-auto w-full max-w-[560px] px-4 py-6 pb-36 outline-none">
         {children}
       </main>
     </>

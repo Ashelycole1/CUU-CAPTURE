@@ -6,6 +6,7 @@ import { settings } from '../db/schema';
 import { writeAudit } from '../audit';
 import { assertAdmin, type Actor } from '../authz';
 import { getDb } from '../db/client';
+import { CacheKeys, cachedRead, invalidateReadCache, READ_CACHE_TTL_MS } from './read-cache';
 
 export interface FeatureFlags {
   sso: boolean;
@@ -14,9 +15,16 @@ export interface FeatureFlags {
   liaison: boolean;
 }
 
+/**
+ * A global setting (never PII), cached per instance for READ_CACHE_TTL_MS and
+ * invalidated by `updateSetting` (other warm instances catch up within the TTL).
+ */
 export async function getSetting<T>(db: DbOrTx, key: string, fallback: T): Promise<T> {
-  const row = (await db.select().from(settings).where(eq(settings.key, key)))[0];
-  return row ? (row.value as T) : fallback;
+  const value = await cachedRead(CacheKeys.setting(key), READ_CACHE_TTL_MS, async () => {
+    const row = (await db.select().from(settings).where(eq(settings.key, key)))[0];
+    return row ? { v: row.value } : null;
+  });
+  return value ? (value.v as T) : fallback;
 }
 
 /** Domains allowed to self-register as students: settings first, env fallback. */
@@ -45,4 +53,5 @@ export async function updateSetting(actor: Actor, key: string, value: unknown): 
       .onConflictDoUpdate({ target: settings.key, set: { value, updatedAt: now, updatedBy: actor.id } });
     await writeAudit(tx, { actorId: actor.id, action: 'settings.updated', targetType: 'setting', targetId: key });
   });
+  invalidateReadCache(CacheKeys.setting(key));
 }

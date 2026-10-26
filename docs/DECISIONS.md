@@ -137,9 +137,10 @@ Filters, sort and cursor are URL params (`q,status,type,nat,risk,fee,from,to,sor
 All staff strings, the cover-sheet text and the per-document review checklists live in `src/i18n/staff.ts` (`staffText`, `fmt`). Keeping them out of `en.ts` avoids edit collisions between agents. The lead can merge them into `en.ts` under `staff.*` later.
 
 ### ST-08 Gaps and limits
-- "Student unreachable" (`emailBounced`) shows on dashboard rows. The detail page can't show it because `ApplicationDetail` has no `email_status`, and nothing sets `bounced` yet (no webhook).
+- "Student unreachable" (`emailBounced`) shows on dashboard rows, on the "Not applied yet" list and, since Wave 3, next to the name on the detail page (`StudentProfileView.emailBounced`). `bounced` is set by the Resend webhook (D-J10).
 - Staff can't withdraw: `withdrawApplication` is student-only. The detail page offers Close where the state machine allows it (`sent_to_immigration`/`pass_issued`).
-- Timeline and messages show "Staff", "You", "System" or the student's name, not other staff members' names.
+- Timeline, messages and the claim banner show other staff members' names through `getProfileNames(actor, ids)` (staff-only, `services/staff.ts`; falls back to the email's local part, then "Staff").
+- The detail page lists the student's open Runway flags (`listOpenRunwayFlags(actor, { studentId })`). The dashboard lists the 10 most urgent students with an open flag (no submitted application) under "Not applied yet", linking to their draft when there is one (PRD story 4).
 - The cover sheet shows the approver's name, read from `profiles` inside the packet-builder service.
 
 ## Student UI
@@ -192,7 +193,7 @@ Vercel Hobby crons run once a day. `.github/workflows/health.yml` (free) calls `
 Eligible: applications `closed` (by `closed_at`) **or `withdrawn`** (by `withdrawn_at`) more than `retention_days` ago, not yet purged. Purging deletes all files (versions, thumbnails, packets, receipts), blanks keys, clears packet manifests (they contain surnames), payment references, message bodies, reviewer notes (row and timeline `note`), notification payloads and application notes, and sets the new `applications.purged_at`. The application row stays as the anonymised aggregate. Students are anonymised automatically only when every application is purged, none is active and they have not signed in within the period. `audit_log` is never touched. `planRetention()` is the only planner, used by both the admin dry run and the sweep.
 
 ### D-J7 Account deletion (FR-AUD-3)
-New table `deletion_requests` (one pending per student). Students may request only when they have no active application. Approval purges all their applications and anonymises the profile immediately (`services/privacy.ts`). The student-facing button belongs to the student UI (functions `requestAccountDeletion`, `getMyDeletionRequest`, `cancelDeletionRequest`); admins decide on `/retention`.
+New table `deletion_requests` (one pending per student). Students may request only when they have no active application. Approval purges all their applications and anonymises the profile immediately (`services/privacy.ts`). The student-facing button belongs to the student UI (functions `requestAccountDeletion`, `getMyDeletionRequest`, `cancelDeletionRequest`); admins decide on `/retention`. Wave 3 added the student UI as the "Your data" section on `/status` (`components/student/account-deletion.tsx`). An unsubmitted **draft** does not block the request: the confirm dialog says the draft will be withdrawn, and the action withdraws it before calling `requestAccountDeletion`. Submitted-or-later applications still block it.
 
 ### D-J8 Rule-set editing and migration
 Only one draft exists at a time; `saveRuleSetDraft` edits it in place (new audit action `rule_set.draft_updated`). The impact summary is generated from a pure diff (`services/rule-diff.ts`). "Migrate in-flight applications" moves **draft applications only** to the published version and recomputes their checklist; submitted-or-later applications always keep their version, because adding a required document to an application under review would break the review state machine (resolves D-22).

@@ -10,6 +10,7 @@ import { applications, reasonTemplates, ruleDocuments, ruleSets } from '../db/sc
 import { InvalidStateError, NotFoundError } from '../errors';
 import { zodToValidation } from './applications';
 import { audit, loadActiveRuleSet, loadRuleSet, nowIso, withTx } from './internal';
+import { CacheKeys, cachedRead, invalidateReadCache, READ_CACHE_TTL_MS } from './read-cache';
 
 /** Current published rule set (any signed-in user may read policy). */
 export async function getActiveRuleSet(): Promise<RuleSet> {
@@ -94,6 +95,9 @@ export async function publishRuleSet(actor: Actor, ruleSetId: string): Promise<R
     await tx.update(ruleSets).set({ status: 'published', publishedAt: now, publishedBy: actor.id }).where(eq(ruleSets.id, rs.id));
     await audit(tx, actor, 'rule_set.published', { type: 'rule_set', id: rs.id }, { version: rs.version });
   });
+  // New drafts on THIS instance use the new version immediately; other warm instances
+  // pick it up within READ_CACHE_TTL_MS (read-cache.ts).
+  invalidateReadCache(CacheKeys.activeRuleSetId);
   return getRuleSet(ruleSetId);
 }
 
@@ -102,6 +106,15 @@ export type ReasonTemplate = typeof reasonTemplates.$inferSelect;
 /** Active reason templates for the reject picker (staff). */
 export async function listReasonTemplates(actor: Actor, opts: { includeInactive?: boolean } = {}): Promise<ReasonTemplate[]> {
   assertStaff(actor);
-  const rows = await getDb().select().from(reasonTemplates).orderBy(asc(reasonTemplates.sort));
-  return opts.includeInactive ? rows : rows.filter((r) => r.active);
+  const rows = await loadReasonTemplatesCached();
+  return opts.includeInactive ? [...rows] : rows.filter((r) => r.active);
+}
+
+/**
+ * All reason templates (global, non-personal), cached per instance for
+ * READ_CACHE_TTL_MS and invalidated by `saveReasonTemplate`. Callers authorize first.
+ * The returned array and rows are frozen.
+ */
+export function loadReasonTemplatesCached(): Promise<readonly ReasonTemplate[]> {
+  return cachedRead(CacheKeys.reasonTemplates, READ_CACHE_TTL_MS, () => getDb().select().from(reasonTemplates).orderBy(asc(reasonTemplates.sort)));
 }

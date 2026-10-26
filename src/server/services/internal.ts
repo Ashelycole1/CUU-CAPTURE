@@ -8,9 +8,10 @@ import { todayInKampala } from '@/domain/dates';
 import type { RuleSet } from '@/domain/types';
 import { actorIdOf, type Actor } from '../authz';
 import { writeAudit, type AuditMeta } from '../audit';
-import { getDb, type DbOrTx, type Tx } from '../db/client';
+import { getClient, getDb, type DbOrTx, type Tx } from '../db/client';
 import { applicationEvents, applications, refCounters, ruleDocuments, ruleSets } from '../db/schema';
 import { InvalidStateError, NotFoundError } from '../errors';
+import { CacheKeys, cachedRead, invalidateReadCache, peekCachedRead, putCachedRead, READ_CACHE_TTL_MS } from './read-cache';
 
 export type ApplicationRow = typeof applications.$inferSelect;
 
@@ -33,6 +34,31 @@ export async function withTx<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
     }
   }
   throw lastErr;
+}
+
+/**
+ * Whether independent reads may run concurrently (`parallelReads`). On Turso (HTTP) each
+ * statement is its own request, so concurrent reads overlap their network round trips.
+ * On a local `file:` database a round trip costs ~0 and the libSQL 0.18 connection pool
+ * was observed to serve a STALE snapshot from one pooled connection under concurrent
+ * reads (docs/PERFORMANCE.md §6), so reads stay sequential there.
+ * Override with DB_PARALLEL_READS=1|0 (the RTT simulation forces 1).
+ */
+export function readsRunInParallel(): boolean {
+  const env = process.env.DB_PARALLEL_READS;
+  if (env === '1') return true;
+  if (env === '0') return false;
+  return getClient().protocol !== 'file';
+}
+
+type Thunks = readonly (() => PromiseLike<unknown>)[];
+
+/** Run independent top-level reads together (remote DB) or one after another (local file). */
+export async function parallelReads<T extends Thunks>(...fns: T): Promise<{ -readonly [K in keyof T]: Awaited<ReturnType<T[K]>> }> {
+  if (readsRunInParallel()) return Promise.all(fns.map((f) => f())) as never;
+  const out: unknown[] = [];
+  for (const f of fns) out.push(await f());
+  return out as never;
 }
 
 export function nowIso(): string {
@@ -126,11 +152,17 @@ export async function allocateRef(tx: DbOrTx, now: Date = new Date()): Promise<s
 
 // ---------------------------------------------------------------- rule sets
 
+/**
+ * A rule set with its documents. Non-draft rule sets are immutable, so they are served
+ * from the per-instance read cache after the first load (saves 2 round trips per call).
+ */
 export async function loadRuleSet(tx: DbOrTx, id: string): Promise<RuleSet> {
+  const hit = peekCachedRead<RuleSet>(CacheKeys.ruleSet(id));
+  if (hit) return hit;
   const rs = (await tx.select().from(ruleSets).where(eq(ruleSets.id, id)))[0];
   if (!rs) throw new NotFoundError('Rule set');
   const docs = await tx.select().from(ruleDocuments).where(eq(ruleDocuments.ruleSetId, id)).orderBy(asc(ruleDocuments.sort));
-  return {
+  const value: RuleSet = {
     id: rs.id,
     version: rs.version,
     feeUsd: rs.feeUsd,
@@ -152,13 +184,27 @@ export async function loadRuleSet(tx: DbOrTx, id: string): Promise<RuleSet> {
       sort: d.sort,
     })),
   };
+  // Drafts are editable: never cache them.
+  if (rs.status !== 'draft') putCachedRead(CacheKeys.ruleSet(id), value, Infinity);
+  return value;
+}
+
+/** Id of the current published rule set (cached ≤ READ_CACHE_TTL_MS; invalidated on publish). */
+export async function loadActiveRuleSetId(tx: DbOrTx): Promise<string> {
+  const id = await cachedRead(CacheKeys.activeRuleSetId, READ_CACHE_TTL_MS, async () => {
+    const rs = (
+      await tx.select({ id: ruleSets.id }).from(ruleSets).where(eq(ruleSets.status, 'published')).orderBy(desc(ruleSets.version)).limit(1)
+    )[0];
+    return rs?.id ?? null;
+  });
+  if (!id) {
+    invalidateReadCache(CacheKeys.activeRuleSetId);
+    throw new InvalidStateError('No published rule set. Run the seed.');
+  }
+  return id;
 }
 
 /** The current published rule set (highest published version). */
 export async function loadActiveRuleSet(tx: DbOrTx): Promise<RuleSet> {
-  const rs = (
-    await tx.select({ id: ruleSets.id }).from(ruleSets).where(eq(ruleSets.status, 'published')).orderBy(desc(ruleSets.version)).limit(1)
-  )[0];
-  if (!rs) throw new InvalidStateError('No published rule set. Run the seed.');
-  return loadRuleSet(tx, rs.id);
+  return loadRuleSet(tx, await loadActiveRuleSetId(tx));
 }

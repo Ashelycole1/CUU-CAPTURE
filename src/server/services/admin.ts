@@ -28,6 +28,7 @@ import { audit, loadRuleSet, nowIso, recordEvent, withTx } from './internal';
 import { createRuleSetDraft, ruleSetInputSchema, type RuleSetInput } from './rules';
 import { diffRuleSets, impactSummary, type RuleSetDiff, type RuleSetLike } from './rule-diff';
 import { updateSetting, getRetentionDays } from './settings';
+import { CacheKeys, invalidateReadCache } from './read-cache';
 
 // ---------------------------------------------------------------- rule sets (FR-ADM-1)
 
@@ -230,7 +231,7 @@ export async function saveReasonTemplate(actor: Actor, input: ReasonTemplateInpu
   const parsed = reasonTemplateSchema.safeParse(input);
   if (!parsed.success) throw zodToValidation(parsed.error);
   const v = parsed.data;
-  return withTx(async (tx) => {
+  const saved = await withTx(async (tx) => {
     const existed = (await tx.select({ code: reasonTemplates.code }).from(reasonTemplates).where(eq(reasonTemplates.code, v.code))).length > 0;
     await tx
       .insert(reasonTemplates)
@@ -239,6 +240,8 @@ export async function saveReasonTemplate(actor: Actor, input: ReasonTemplateInpu
     await audit(tx, actor, existed ? 'reason_template.updated' : 'reason_template.created', { type: 'reason_template', id: v.code }, { active: v.active });
     return (await tx.select().from(reasonTemplates).where(eq(reasonTemplates.code, v.code)))[0]!;
   });
+  invalidateReadCache(CacheKeys.reasonTemplates);
+  return saved;
 }
 
 export async function listAllReasonTemplates(actor: Actor) {

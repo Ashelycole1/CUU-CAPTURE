@@ -1,21 +1,23 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { Flag } from 'lucide-react';
 import { requireActor } from '@/server/auth/current';
 import { isServiceError } from '@/server/errors';
 import { getDashboardSummary, listApplicationsForStaff, listSavedViews, type StaffListResult } from '@/server/services';
+import { listOpenRunwayFlags } from '@/server/services/runway-flags';
 import { todayInKampala } from '@/domain/dates';
 import type { StaffListFilters, StaffSort } from '@/domain';
-import { fmt, staffText } from '@/i18n/staff';
+import { staffText } from '@/i18n/staff';
 import { SummaryTiles } from '@/components/staff/summary-tiles';
 import { DashboardFilters } from '@/components/staff/dashboard-filters';
 import { SavedViews, type SavedViewItem } from '@/components/staff/saved-views';
 import { ApplicationsTable, type DashboardRow } from '@/components/staff/applications-table';
+import { NotAppliedList } from '@/components/staff/not-applied-list';
 import { dashboardSearch, parseDashboardParams, type RawSearchParams } from '@/components/staff/dashboard-params';
 
 export const metadata: Metadata = { title: staffText.dashboard.title };
 
 const PAGE_SIZE = 50;
+const NOT_APPLIED_SHOWN = 10;
 const T = staffText.dashboard;
 
 /**
@@ -29,9 +31,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const today = todayInKampala();
 
   const listPage = (c: string | null): Promise<StaffListResult> => listApplicationsForStaff(actor, { filters, sort, cursor: c, limit: PAGE_SIZE, today });
-  const [summary, views, list] = await Promise.all([
+  const [summary, views, flags, list] = await Promise.all([
     getDashboardSummary(actor, today),
     listSavedViews(actor),
+    listOpenRunwayFlags(actor, { limit: NOT_APPLIED_SHOWN, today }),
     listPage(cursor).catch((e: unknown) => {
       // A stale/hand-edited cursor: fall back to the first page instead of failing.
       if (isServiceError(e) && e.code === 'VALIDATION' && cursor) return listPage(null);
@@ -92,12 +95,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
         }}
       />
 
-      {summary.openRunwayFlags > 0 && (
-        <p className="flex items-center gap-2 rounded-md border border-line bg-surface px-4 py-2 text-sm">
-          <Flag aria-hidden className="size-4 text-risk-urgent" />
-          {fmt(T.runwayFlags, { count: summary.openRunwayFlags })}
-        </p>
-      )}
+      <NotAppliedList flags={flags} total={Math.max(summary.openRunwayFlags, flags.length)} />
 
       <SavedViews views={savedViews} current={{ ...filters, sort }} />
       <DashboardFilters key={JSON.stringify([filters, sort])} filters={filters} sort={sort} />
