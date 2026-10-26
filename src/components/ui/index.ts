@@ -10,3 +10,4 @@ export { Tabs, type TabItem } from './tabs';
 export { TableContainer, Table, THead, TBody, TR, TH, TD } from './table';
 export { Stepper, type Step } from './stepper';
 export { Skeleton, SkeletonText } from './skeleton';
+export { EmptyState } from './empty-state';

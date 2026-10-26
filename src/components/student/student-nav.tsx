@@ -14,8 +14,8 @@ const links = [
 export function StudentNav() {
   const path = usePathname() ?? '';
   return (
-    <nav aria-label={studentText.nav.main} className="border-b border-line bg-surface">
-      <ul className="mx-auto flex w-full max-w-[560px] px-2">
+    <nav aria-label={studentText.nav.main} className="px-4 pt-4">
+      <ul className="mx-auto flex w-full max-w-[528px] gap-1 rounded-full border-2 border-edge bg-surface p-1">
         {links.map((l) => {
           const active = l.match.some((m) => path === m || path.startsWith(`${m}/`));
           return (
@@ -24,8 +24,8 @@ export function StudentNav() {
                 href={l.href}
                 aria-current={active ? 'page' : undefined}
                 className={cn(
-                  'flex min-h-12 items-center justify-center border-b-2 text-sm font-semibold no-underline',
-                  active ? 'border-brand-500 text-ink' : 'border-transparent text-ink-muted hover:text-ink',
+                  'flex min-h-11 items-center justify-center rounded-full text-sm font-bold no-underline transition-colors duration-200',
+                  active ? 'bg-brand-900 text-white dark:bg-sky' : 'text-ink-muted hover:bg-silver hover:text-ink',
                 )}
               >
                 {l.label}

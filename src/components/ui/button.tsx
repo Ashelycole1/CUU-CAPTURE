@@ -15,8 +15,8 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const variants: Record<ButtonVariant, string> = {
-  primary: 'bg-brand-500 text-on-brand hover:bg-brand-700 border border-transparent',
-  secondary: 'bg-surface text-ink border border-line hover:bg-brand-100',
+  primary: 'bg-brand-500 text-on-brand border-2 border-edge hover:-translate-y-0.5 hover:shadow-2 active:translate-y-0 active:shadow-none',
+  secondary: 'bg-surface text-ink border-2 border-edge hover:-translate-y-0.5 hover:shadow-2 active:translate-y-0 active:shadow-none',
   ghost: 'bg-transparent text-ink border border-transparent hover:bg-brand-100',
   danger: 'bg-[#b42318] text-white border border-transparent hover:brightness-95',
   success: 'bg-[#1f7a52] text-white border border-transparent hover:brightness-95',
@@ -40,8 +40,8 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       disabled={disabled || loading}
       aria-busy={loading || undefined}
       className={cn(
-        'inline-flex items-center justify-center rounded-sm font-semibold transition-colors duration-150 ease-out',
-        'disabled:cursor-not-allowed disabled:opacity-60',
+        'inline-flex items-center justify-center rounded-sm font-bold transition-[background-color,box-shadow,transform] duration-150 ease-out',
+        'disabled:cursor-not-allowed disabled:opacity-60 disabled:translate-y-0 disabled:shadow-none',
         variants[variant],
         sizes[size],
         fullWidth && 'w-full',

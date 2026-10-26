@@ -1,5 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
+import { SearchX } from 'lucide-react';
+import { EmptyState } from '@/components/ui/empty-state';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { BellRing, ChevronRight, Download, FolderArchive, Lock, MailX, Wallet, X } from 'lucide-react';
@@ -137,10 +139,7 @@ export function ApplicationsTable({ rows, total }: { rows: DashboardRow[]; total
 
   if (rows.length === 0) {
     return (
-      <div className="rounded-md border border-dashed border-line bg-surface px-6 py-12 text-center">
-        <p className="font-semibold">{T.empty}</p>
-        <p className="mt-1 text-sm text-ink-muted">{T.emptyHint}</p>
-      </div>
+      <EmptyState icon={SearchX} title={T.empty} hint={T.emptyHint} />
     );
   }
 

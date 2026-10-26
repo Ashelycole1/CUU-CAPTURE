@@ -27,6 +27,8 @@ export interface ChecklistCardProps {
  * One checklist item (FR-CHK-2/4/5): name, why, where to get it, state chip,
  * "Required by the university" tag, page slots. The whole card is the link.
  */
+const BAR: Record<string, string> = { ok: 'var(--ok)', warn: 'var(--warn)', bad: 'var(--bad)', info: 'var(--info)', teal: 'var(--teal)', neutral: 'var(--line)' };
+
 export function ChecklistCard(p: ChecklistCardProps) {
   const chip = documentStateChip(p.state);
   const slots = p.minFiles > 1 ? slotsFor(p.minFiles, p.pagesDone) : null;
@@ -60,13 +62,16 @@ export function ChecklistCard(p: ChecklistCardProps) {
     </>
   );
   const cls = cn(
-    'block rounded-md border bg-surface p-4 shadow-1 no-underline text-ink',
+    'relative block overflow-hidden rounded-md border bg-surface p-4 pl-5 shadow-1 no-underline text-ink transition-[box-shadow,transform,border-color] duration-200',
+    // Left accent bar in the state's colour (the chip still carries the meaning in text).
+    'before:absolute before:inset-y-0 before:left-0 before:w-1.5 before:bg-[var(--bar)]',
     p.isNext ? 'border-brand-500 ring-1 ring-brand-500' : 'border-line',
     p.state === 'rejected' && 'border-[color-mix(in_srgb,var(--warn)_60%,transparent)]',
   );
-  if (!p.canUpload) return <div className={cls}>{body}</div>;
+  const style = { '--bar': p.isNext ? 'var(--brand-500)' : BAR[chip.tone ?? 'neutral'] } as React.CSSProperties;
+  if (!p.canUpload) return <div className={cls} style={style}>{body}</div>;
   return (
-    <Link href={docHref(p.code)} className={cn(cls, 'group relative pr-10 hover:border-brand-500')}>
+    <Link href={docHref(p.code)} style={style} className={cn(cls, 'group pr-10 hover:-translate-y-0.5 hover:border-brand-500 hover:shadow-2')}>
       {body}
       <ChevronRight aria-hidden className="absolute top-1/2 right-3 size-5 -translate-y-1/2 text-ink-muted group-hover:text-ink" />
     </Link>

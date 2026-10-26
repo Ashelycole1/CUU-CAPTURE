@@ -72,7 +72,7 @@ export default async function ApplyPage() {
         </Link>
       )}
 
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex items-center justify-between gap-3 rounded-md border-2 border-edge bg-sky p-3 pr-4">
         <ProgressRing done={c.progress.done} total={c.progress.total} />
         {draft && (
           <Link href="/profile" className="inline-flex min-h-12 items-center gap-1.5 text-sm font-semibold">

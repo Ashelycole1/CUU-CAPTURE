@@ -8,6 +8,12 @@ export const en = {
     tagline: 'Student Pass applications for Cavendish University Uganda',
     skipToContent: 'Skip to content',
     signOut: 'Sign out',
+    welcome: {
+      title: 'Your Student Pass, without the queues',
+      body: 'Gather your documents from your phone, send them to the Dean of Students, and follow every step until your pass is ready.',
+      steps: ['Check what you need', 'Scan each document', 'Track your pass'],
+    },
+    theme: { label: 'Theme: {mode}. Change theme', system: 'match device', light: 'light', dark: 'dark' },
     loading: 'Loading…',
     retry: 'Try again',
     genericError: 'Something went wrong. Please try again.',

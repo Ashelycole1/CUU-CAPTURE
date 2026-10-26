@@ -7,18 +7,26 @@
  * Themes: light (default), dark via [data-theme="dark"] or OS preference.
  */
 :root {
-  /* Brand */
-  --brand-900: #0b2545;
-  --brand-700: #13315c;
-  --brand-500: #1f5fbf;
-  --brand-100: #e6eefb;
-  --accent-500: #c8963e;
+  /*
+   * Cavendish University Uganda colours: Blue (knowledge), Grey (timelessness), Silver (professionalism).
+   * Hex values approximate the university blue; confirm against the official brand guide.
+   * Style: flat colour blocks, bold type, ink outlines (no gradients or glows).
+   */
+  --brand-900: #0d1b3d; /* deep Cavendish navy */
+  --brand-700: #10357f;
+  --brand-500: #1747a6; /* Cavendish blue */
+  --brand-100: #e3ecfb;
+  --sky: #bcd3f5; /* light blue block */
+  --silver: #dfe4ec; /* silver block */
+  --grey: #4d5566; /* Cavendish grey */
+  --accent-500: #8a95a8; /* silver-grey accent */
 
-  /* Neutrals (warm) */
-  --ink: #14181f;
-  --ink-muted: #4b5563;
-  --line: #e3e0d8;
-  --paper: #fbfaf7;
+  /* Neutrals */
+  --ink: #0d1b3d;
+  --ink-muted: #4d5566;
+  --line: #d5dae3;
+  --edge: #0d1b3d; /* chunky outlines on buttons, nav, key cards */
+  --paper: #ffffff;
   --surface: #ffffff;
 
   /* Risk bands (always paired with icon + text) */
@@ -39,24 +47,32 @@
 
   /* Text on brand/primary buttons */
   --on-brand: #ffffff;
-  --link: #1f5fbf;
-  --focus: #1f5fbf;
+  --link: #1747a6;
+  --focus: #1747a6;
 
-  --radius-sm: 8px;
-  --radius-md: 14px;
-  --radius-lg: 22px;
-  --shadow-1: 0 1px 2px rgb(20 24 31 / 0.06), 0 4px 12px rgb(20 24 31 / 0.06);
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 24px;
+  /* Flat: no soft glow. shadow-2 is a hard "lift" offset used on hover. */
+  --shadow-1: none;
+  --shadow-2: 0 4px 0 0 var(--edge);
 
   color-scheme: light;
 }
 
 [data-theme='dark'] {
-  --ink: #eef1f6;
-  --ink-muted: #a7b0bf;
-  --line: #2a3140;
-  --paper: #0e1219;
-  --surface: #151b25;
-  --brand-100: #14233f;
+  --ink: #f2f5fb;
+  --ink-muted: #a8b3c7;
+  --line: #2a3a66;
+  --edge: #8fa6d6;
+  --paper: #0b1530;
+  --surface: #14203f;
+  --brand-100: #1c2d5c;
+  --brand-500: #2f63d0;
+  --sky: #24407e;
+  --silver: #1f2c4f;
+  --shadow-1: none;
+  --shadow-2: 0 4px 0 0 var(--edge);
   /* Lifted for ≥ 4.5:1 on dark surfaces */
   --risk-safe: #4cc38a;
   --risk-plan: #7aa7ff;
@@ -69,19 +85,25 @@
   --bad: #ff7a6e;
   --info: #7aa7ff;
   --teal: #4fd1c5;
-  --link: #8db4ff;
-  --focus: #8db4ff;
+  --link: #8fb4ff;
+  --focus: #8fb4ff;
   color-scheme: dark;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
-    --ink: #eef1f6;
-    --ink-muted: #a7b0bf;
-    --line: #2a3140;
-    --paper: #0e1219;
-    --surface: #151b25;
-    --brand-100: #14233f;
+    --ink: #f2f5fb;
+    --ink-muted: #a8b3c7;
+    --line: #2a3a66;
+    --edge: #8fa6d6;
+    --paper: #0b1530;
+    --surface: #14203f;
+    --brand-100: #1c2d5c;
+    --brand-500: #2f63d0;
+    --sky: #24407e;
+    --silver: #1f2c4f;
+    --shadow-1: none;
+    --shadow-2: 0 4px 0 0 var(--edge);
     --risk-safe: #4cc38a;
     --risk-plan: #7aa7ff;
     --risk-urgent: #f0b44c;
@@ -93,13 +115,23 @@
     --bad: #ff7a6e;
     --info: #7aa7ff;
     --teal: #4fd1c5;
-    --link: #8db4ff;
-    --focus: #8db4ff;
+    --link: #8fb4ff;
+    --focus: #8fb4ff;
     color-scheme: dark;
   }
 }
 
-@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+/* `dark:` follows an explicit choice, else the OS preference (matches the token rules above). */
+@custom-variant dark {
+  &:where([data-theme='dark'], [data-theme='dark'] *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-theme='light']), :root:not([data-theme='light']) *) {
+      @slot;
+    }
+  }
+}
 
 @theme inline {
   --color-brand-900: var(--brand-900);
@@ -131,9 +163,15 @@
   --radius-md: var(--radius-md);
   --radius-lg: var(--radius-lg);
   --shadow-1: var(--shadow-1);
+  --shadow-2: var(--shadow-2);
 
-  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  --font-serif: var(--font-fraunces), 'Source Serif 4', Georgia, serif;
+  --font-sans: var(--font-dm-sans), ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  /* "serif" is the display face (name kept so existing font-serif classes follow the refresh). */
+  --font-serif: var(--font-bricolage), ui-sans-serif, system-ui, sans-serif;
+  --color-sky: var(--sky);
+  --color-silver: var(--silver);
+  --color-grey: var(--grey);
+  --color-edge: var(--edge);
   --font-mono: var(--font-jetbrains), ui-monospace, 'SFMono-Regular', Menlo, monospace;
 
   /* Type scale 12/14/16/18/22/28/36 */
@@ -175,12 +213,23 @@
   h1,
   h2 {
     font-family: var(--font-serif);
-    font-weight: 600;
-    letter-spacing: -0.01em;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+  }
+  h3 {
+    font-family: var(--font-serif);
+    font-weight: 700;
+  }
+  button,
+  [role='button'],
+  a,
+  summary,
+  label[for] {
+    cursor: pointer;
   }
   h1 {
-    font-size: clamp(1.75rem, 1.4rem + 1.6vw, 2.25rem);
-    line-height: 1.2;
+    font-size: clamp(2rem, 1.5rem + 2.4vw, 3rem);
+    line-height: 1.05;
   }
   h2 {
     font-size: var(--text-xl);

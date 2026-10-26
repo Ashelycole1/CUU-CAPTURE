@@ -1,4 +1,6 @@
 import type { Metadata } from 'next';
+import { MessagesSquare } from 'lucide-react';
+import { EmptyState } from '@/components/ui/empty-state';
 import Link from 'next/link';
 import { requireActor } from '@/server/auth/current';
 import { getMyActiveApplication, listMessages, listMyApplications } from '@/server/services';
@@ -42,7 +44,7 @@ export default async function MessagesPage() {
       </div>
 
       {thread.length === 0 ? (
-        <p className="rounded-md border border-dashed border-line p-6 text-center text-ink-muted">{m.empty}</p>
+        <EmptyState icon={MessagesSquare} title={m.empty} />
       ) : (
         <ol className="space-y-3" aria-label={m.title}>
           {thread.map((msg) => {
